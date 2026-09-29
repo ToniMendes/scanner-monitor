@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-type FileExplorer struct{}
+type FileSystem struct{}
 
-func NewFileExplorer() *FileExplorer {
-	return &FileExplorer{}
+func NewFileSystem() *FileSystem {
+	return &FileSystem{}
 }
 
-func (f *FileExplorer) GetPdf(channel chan string) error {
+func (f *FileSystem) GetPdf(channel chan string) error {
 	const filePath = `C:\Users\srden\Downloads\pdfss\`
 
 	walkDirFunc := func(path string, d fs.DirEntry, err error) error {

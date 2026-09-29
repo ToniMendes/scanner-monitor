@@ -4,7 +4,6 @@ import (
 	"log"
 	"scanner-monitor/internal/config"
 	"scanner-monitor/internal/di"
-	"scanner-monitor/internal/infra/filesystem"
 
 )
 
@@ -12,9 +11,7 @@ func main() {
 	err := config.StartViper()
 	returnFatalError(err)
 
-	fsRepo := filesystem.NewFileExplorer()
-	app := di.NewApp(fsRepo)
-
+	app := di.NewApp()
 	err = app.ToExecute()
 	returnFatalError(err)
 }
