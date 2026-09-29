@@ -4,58 +4,33 @@ package di
 import (
 	"fmt"
 	"scanner-monitor/internal/domain"
-	"scanner-monitor/internal/infra/ai"
-	"scanner-monitor/internal/infra/filesystem"
 
 )
 
-type repositories interface {
-	domain.FileExplorerRepository
-	domain.GeminiAIRepository
-}
-type AppRepository struct {
-	repo repositories
+type App struct {
+	ai domain.GeminiAIRepository
+	fs domain.FileSystemRepository
 }
 
-func newAppRepository(r repositories) *AppRepository {
-	return &AppRepository{
-		repo: r,
+func NewApp(fs domain.FileSystemRepository, ai domain.GeminiAIRepository) *App {
+	return &App{
+		ai:ai,
+		fs: fs,
 	}
 }
 
-func NewApp() *AppRepository{
-	fmt.Println("Iniciando configurações do app")
-
-	aiRepo := ai.NewGeminiAI()
-	fsRepo := filesystem.NewFileSystem()
-
-	type hub struct {
-		*ai.GeminiAI
-		*filesystem.FileSystem
-	}
-
-	h := hub{
-		aiRepo,
-		fsRepo,
-	}
-
-	app := newAppRepository(h)
-
-	return app
-}
-
-func (app *AppRepository) ToExecute() error {
+func (app *App) ToExecute() error {
 
 	fmt.Println("Executando app.")
 
 	var channel = make(chan string, 10)
 
-	err := app.repo.GetPdf(channel)
+	err := app.fs.GetPdf(channel)
 	if err != nil {
 		return err
 	}
 
-	err = app.repo.ReadPath(channel)
+	err = app.ai.ReadPath(channel)
 	if err != nil {
 		return err
 	}
