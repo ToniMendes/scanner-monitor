@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"scanner-monitor/internal/configs"
+	"scanner-monitor/internal/config"
 	"time"
 
 	"google.golang.org/genai"
-
 )
 
 type GeminiAI struct {
@@ -21,7 +20,7 @@ type GeminiAI struct {
 
 func NewGeminiAI() *GeminiAI {
 	return &GeminiAI{
-		apiKey:         configs.Env.GeminiAPIKey,
+		apiKey:         config.Env.GeminiAPIKey,
 		gemini3_8flash: "models/gemini-3.8-flash",
 		gemini3_1pro:   "models/gemini-3.1-pro-preview",
 	}
@@ -82,7 +81,7 @@ func (g *GeminiAI) uploadPDFToGemini(file *os.File) error {
 	}
 
 	uploadedFile, err := client.Files.Upload(ctx, file, &genai.UploadFileConfig{
-			MIMEType: "application/pdf",
+		MIMEType: "application/pdf",
 	})
 	if err != nil {
 		return fmt.Errorf("erro ao fazer upload na File API: %w", err)

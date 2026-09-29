@@ -1,11 +1,10 @@
-// Package fileexplorer provides utilities for finding files in directories.
-package fileexplorer
+// Package filesystem provides utilities for finding files in directories.
+package filesystem
 
 import (
 	"io/fs"
 	"path/filepath"
 	"strings"
-
 )
 
 type FileExplorer struct{}

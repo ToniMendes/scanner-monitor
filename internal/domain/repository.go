@@ -1,5 +1,5 @@
 package domain
 
-type ExplorerRepository interface {
+type FileExplorerRepository interface {
 	GetPdf(channel chan string) error
 }

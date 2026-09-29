@@ -1,5 +1,5 @@
-// Package configs loads application configuration from environment and .env files.
-package configs
+// Package config loads application configuration from environment and .env files.
+package config
 
 import (
 	"fmt"
