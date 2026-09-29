@@ -1,3 +1,4 @@
+// Package configs loads application configuration from environment and .env files.
 package configs
 
 import (
@@ -8,7 +9,6 @@ import (
 
 type Config struct {
 	GeminiAPIKey string `mapstructure:"GEMINI_API_KEY"`
-	GeminiSDK    string `mapstructure:"GEMINI_SDK"`
 }
 
 var Env *Config

@@ -1,4 +1,5 @@
-package models
+// Package domain contains the application's core domain models.
+package domain
 
 import (
 	"fmt"
