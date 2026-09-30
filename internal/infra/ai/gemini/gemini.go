@@ -1,8 +1,9 @@
 // Package ai provides integration with Google's Gemini API.
-package ai
+package gemini
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -10,7 +11,12 @@ import (
 	"time"
 
 	"google.golang.org/genai"
+
 )
+
+type inputDTO struct {
+	DirName string `json:"dirname"`
+}
 
 type GeminiAI struct {
 	apiKey         string
@@ -26,10 +32,7 @@ func NewGeminiAI() *GeminiAI {
 	}
 }
 
-func (g *GeminiAI) startGemini() (*genai.Client, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
+func (g *GeminiAI) startGemini(ctx context.Context) (*genai.Client, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey: g.apiKey,
 	})
@@ -40,8 +43,8 @@ func (g *GeminiAI) startGemini() (*genai.Client, error) {
 	return client, nil
 }
 
-func (g *GeminiAI) ReadPath(pdfChan chan string) error {
-	defer close(pdfChan)
+func (g *GeminiAI) ReadPath(pdfChan <-chan string, mkdirNameChan chan<- string) error {
+	defer close(mkdirNameChan)
 
 	if pdfChan == nil {
 		return fmt.Errorf("nenhum caminho de pdf recebido")
@@ -58,10 +61,12 @@ func (g *GeminiAI) ReadPath(pdfChan chan string) error {
 		err = func() error {
 			defer file.Close()
 
-			err = g.uploadPDFToGemini(file)
+			dto, err := g.uploadPDFToGemini(file)
 			if err != nil {
 				return fmt.Errorf("erro ao enviar PDF para Gemini: %w", err)
 			}
+
+			mkdirNameChan <- dto.DirName
 			return nil
 		}()
 		if err != nil {
@@ -71,20 +76,22 @@ func (g *GeminiAI) ReadPath(pdfChan chan string) error {
 	return nil
 }
 
-func (g *GeminiAI) uploadPDFToGemini(file *os.File) error {
+func (g *GeminiAI) uploadPDFToGemini(file *os.File) (*inputDTO, error) {
+	var dto inputDTO
+
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	client, err := g.startGemini()
+	client, err := g.startGemini(ctx)
 	if err != nil {
-		return fmt.Errorf("erro ao iniciar Gemini: %w", err)
+		return &dto, fmt.Errorf("erro ao iniciar Gemini: %w", err)
 	}
 
 	uploadedFile, err := client.Files.Upload(ctx, file, &genai.UploadFileConfig{
 		MIMEType: "application/pdf",
 	})
 	if err != nil {
-		return fmt.Errorf("erro ao fazer upload na File API: %w", err)
+		return &dto, fmt.Errorf("erro ao fazer upload na File API: %w", err)
 	}
 
 	// Remove o arquivo temporário dos servidores do Gemini ao terminar
@@ -96,7 +103,21 @@ func (g *GeminiAI) uploadPDFToGemini(file *os.File) error {
 	}()
 
 	// 2. Prepara a chamada para o modelo ler o PDF enviado
-	prompt := "apenas diga oque é cada um dos pdf, nao precisa explicar nada, apenas diga oque eles são."
+	prompt := "Analise este documento PDF e forneça um nome de pasta padronizado (dirname) baseado nas informações presentes. exemplo (NOME_CPF ou RG ou PRONTUARIO),"
+
+	config := &genai.GenerateContentConfig{
+		ResponseMIMEType: "application/json",
+		ResponseSchema: &genai.Schema{
+			Type: genai.TypeObject,
+			Properties: map[string]*genai.Schema{
+				"dirname": {
+					Type:        genai.TypeString,
+					Description: "Sugestão de nome de pasta padronizado para o aluno (ex: Nome_CPF) Ou caso seja um pdf diferente crie com um nome de categorize ele.",
+				},
+			},
+			Required: []string{"dirname"},
+		},
+	}
 
 	resp, err := client.Models.GenerateContent(ctx, g.gemini3_8flash, []*genai.Content{
 		{
@@ -109,13 +130,17 @@ func (g *GeminiAI) uploadPDFToGemini(file *os.File) error {
 				}},
 			},
 		},
-	}, nil)
+	}, config)
 	if err != nil {
-		return fmt.Errorf("erro ao gerar resposta do Gemini: %w", err)
+		return &dto, fmt.Errorf("erro ao gerar resposta do Gemini: %w", err)
+	}
+
+	if err := json.Unmarshal([]byte(resp.Text()), &dto); err != nil {
+		return &dto, fmt.Errorf("erro ao converter resposta JSON para struct Student")
 	}
 
 	// 3. Imprime ou processa o texto retornado pelo Gemini
 	fmt.Printf("\n--- Resultado do PDF: ---\n%s\n\n", resp.Text())
 
-	return nil
+	return &dto, nil
 }

@@ -23,14 +23,20 @@ func (app *App) ToExecute() error {
 
 	fmt.Println("Executando app.")
 
-	var channel = make(chan string, 10)
+	var pathchan = make(chan string, 10)
+	var mkdirNameChan = make(chan string, 1)
 
-	err := app.fs.GetPdf(channel)
+	err := app.fs.GetPdf(pathchan)
 	if err != nil {
 		return err
 	}
 
-	err = app.ai.ReadPath(channel)
+	err = app.ai.ReadPath(pathchan, mkdirNameChan)
+	if err != nil {
+		return err
+	}
+
+	err = app.fs.MakeDir(mkdirNameChan)
 	if err != nil {
 		return err
 	}

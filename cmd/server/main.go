@@ -13,7 +13,7 @@ func main() {
 	err := config.StartViper()
 	returnFatalError(err)
 
-	aiRepo := ai.NewGeminiAI()
+	aiRepo := ai.NewOpenAI()
 	fsRepo := filesystem.NewFileSystem()
 
 	app := di.NewApp(fsRepo, aiRepo)

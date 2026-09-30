@@ -1,9 +1,10 @@
 package domain
 
 type FileSystemRepository interface {
-	GetPdf(channel chan string) error
+	GetPdf(pathChan chan<- string) error
+	MakeDir(mkdirChan <-chan string) error
 }
 
 type GeminiAIRepository interface {
-	ReadPath(chan string) error
+	ReadPath(<-chan string, chan<- string) error
 }
