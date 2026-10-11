@@ -4,6 +4,7 @@ package filesystem
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 	"time"
 )
 
-type FileSystem struct{}
+type FileSystem struct{ pollInterval time.Duration }
 
 func NewFileSystem() *FileSystem {
 	return &FileSystem{}
@@ -20,14 +21,21 @@ func NewFileSystem() *FileSystem {
 func (f *FileSystem) GetPdf(
 	ctx context.Context,
 	filePDF chan<- *os.File,
+	filePath string,
 ) error {
+	if strings.TrimSpace(filePath) == "" {
+		return fmt.Errorf("pasta de entrada não informada")
+	}
+	filePath = filepath.Clean(filePath)
 
-	const filePath = `C:\Users\srden\Downloads\pdfss\`
-
-	ticker := time.NewTicker(2 * time.Second)
+	interval := f.pollInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	seen := make(map[string]bool)
+	seen := make(map[string]os.FileInfo)
 
 	for {
 		select {
@@ -61,9 +69,16 @@ func (f *FileSystem) GetPdf(
 					}
 
 					present[path] = true
+					info, err := d.Info()
+					if err != nil {
+						return err
+					}
+					if !info.Mode().IsRegular() {
+						return nil
+					}
 
 					// Já enviamos este arquivo.
-					if seen[path] {
+					if previous, ok := seen[path]; ok && os.SameFile(previous, info) && previous.Size() == info.Size() && previous.ModTime().Equal(info.ModTime()) {
 						return nil
 					}
 
@@ -78,7 +93,7 @@ func (f *FileSystem) GetPdf(
 
 					select {
 					case filePDF <- file:
-						seen[path] = true
+						seen[path] = info
 
 					case <-ctx.Done():
 						if err := file.Close(); err != nil {
@@ -106,10 +121,12 @@ func (f *FileSystem) GetPdf(
 	}
 }
 
-func (f *FileSystem) CreateFolder(classificationName string) (string, error) {
+func (f *FileSystem) CreateFolder(classificationName, dirBase string) (string, error) {
+	if strings.TrimSpace(dirBase) == "" || classificationName == "" || classificationName == "." || classificationName == ".." || strings.ContainsAny(classificationName, "/\\:") {
+		return "", fmt.Errorf("pasta base ou categoria inválida")
+	}
 	fmt.Println("Criando Pasta.")
 	// Caminho da pasta
-	const dirBase = `C:\Users\srden\Downloads\organizados\`
 
 	dirPath := filepath.Join(
 		dirBase,
@@ -120,10 +137,17 @@ func (f *FileSystem) CreateFolder(classificationName string) (string, error) {
 	err := os.Mkdir(dirPath, 0755)
 	if err != nil {
 		if os.IsExist(err) {
+			info, statErr := os.Stat(dirPath)
+			if statErr != nil {
+				return "", statErr
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("destino não é um diretório: %q", dirPath)
+			}
 			fmt.Println("Pasta já existe.")
 			return dirPath, nil
 		}
-		return "", nil
+		return "", fmt.Errorf("erro ao criar pasta %q: %w", dirPath, err)
 	}
 
 	fmt.Println("Pasta criada com sucesso!")
@@ -134,6 +158,9 @@ func (f *FileSystem) MovePDF(
 	sourcePath string,
 	destinationDir string,
 ) error {
+	if strings.TrimSpace(sourcePath) == "" || strings.TrimSpace(destinationDir) == "" {
+		return fmt.Errorf("origem e destino são obrigatórios")
+	}
 
 	fileName := filepath.Base(sourcePath)
 
@@ -142,8 +169,14 @@ func (f *FileSystem) MovePDF(
 		fileName,
 	)
 
-	sourceClean := filepath.Clean(sourcePath)
-	destinationClean := filepath.Clean(destinationPath)
+	sourceClean, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return err
+	}
+	destinationClean, err := filepath.Abs(destinationPath)
+	if err != nil {
+		return err
+	}
 
 	if strings.EqualFold(sourceClean, destinationClean) {
 		return fmt.Errorf(
@@ -152,18 +185,43 @@ func (f *FileSystem) MovePDF(
 		)
 	}
 
-	if err := os.Rename(
-		sourcePath,
-		destinationPath,
-	); err != nil {
-
-		return fmt.Errorf(
-			"erro ao mover %q para %q: %w",
-			sourcePath,
-			destinationPath,
-			err,
-		)
+	input, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("erro ao abrir origem: %w", err)
 	}
-
-	return nil
+	defer input.Close()
+	info, err := input.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("origem não é um arquivo regular")
+	}
+	ext := filepath.Ext(fileName)
+	stem := strings.TrimSuffix(fileName, ext)
+	for n := 0; ; n++ {
+		if n > 0 {
+			destinationPath = filepath.Join(destinationDir, fmt.Sprintf("%s (%d)%s", stem, n, ext))
+		}
+		output, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("erro ao reservar destino: %w", err)
+		}
+		_, copyErr := io.Copy(output, input)
+		closeErr := output.Close()
+		if copyErr != nil || closeErr != nil {
+			cleanupErr := os.Remove(destinationPath)
+			return fmt.Errorf("erro ao copiar PDF: cópia=%v fechamento=%v limpeza=%v", copyErr, closeErr, cleanupErr)
+		}
+		if err := input.Close(); err != nil {
+			return fmt.Errorf("erro ao fechar origem; cópia preservada: %w", err)
+		}
+		if err := os.Remove(sourcePath); err != nil {
+			return fmt.Errorf("erro ao remover origem; cópia preservada em %q: %w", destinationPath, err)
+		}
+		return nil
+	}
 }

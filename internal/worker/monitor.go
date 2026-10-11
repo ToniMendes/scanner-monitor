@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"scanner-monitor/internal/domain"
 	"sync"
@@ -19,19 +20,26 @@ func NewMonitor(aiRepo domain.GeminiAIRepository, fsRepo domain.FileSystemReposi
 	}
 }
 
-func (m *Monitor) Monitoring(ctx context.Context) chan error {
-	worker := 5
+func (m *Monitor) Monitoring(ctx context.Context, filePathBase, dirPathBase string) chan error {
+	ctx, cancel := context.WithCancel(ctx)
+	worker := 20
 	var wg sync.WaitGroup
 	var fileChan = make(chan *os.File)
 
 	var errChan = make(chan error, 1)
-
-	go func() {
-		err := m.fs.GetPdf(ctx, fileChan)
-		if err != nil {
-			errChan <- err
-			return
+	var once sync.Once
+	report := func(err error) {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			once.Do(func() { errChan <- err; cancel() })
 		}
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(fileChan)
+		err := m.fs.GetPdf(ctx, fileChan, filePathBase)
+		report(err)
 	}()
 
 	for i := 0; i < worker; i++ {
@@ -40,24 +48,35 @@ func (m *Monitor) Monitoring(ctx context.Context) chan error {
 		go func(i int) {
 			defer wg.Done()
 
-			file := <-fileChan
+			for file := range fileChan {
+				if file == nil {
+					report(errors.New("arquivo PDF não informado"))
+					continue
+				}
+				if ctx.Err() != nil {
+					file.Close()
+					continue
+				}
+				name := file.Name()
 
-			model, err := m.ai.AnalyzePDF(ctx, file)
-			if err != nil {
-				errChan <- err
-				return
-			}
+				model, err := m.ai.AnalyzePDF(ctx, file)
+				file.Close()
+				if err != nil {
+					report(err)
+					continue
+				}
+				if model == nil {
+					report(errors.New("classificação não informada"))
+					continue
+				}
 
-			dirPath, err := m.fs.CreateFolder(model.ClassificationName)
-			if err != nil {
-				errChan <- err
-				return
-			}
+				dirPath, err := m.fs.CreateFolder(model.ClassificationName, dirPathBase)
+				if err != nil {
+					report(err)
+					continue
+				}
 
-			err = m.fs.MovePDF(file.Name(), dirPath)
-			if err != nil {
-				errChan <- err
-				return
+				report(m.fs.MovePDF(name, dirPath))
 			}
 
 		}(i)
@@ -65,6 +84,8 @@ func (m *Monitor) Monitoring(ctx context.Context) chan error {
 
 	go func() {
 		wg.Wait()
+		cancel()
+		close(errChan)
 	}()
 
 	return errChan

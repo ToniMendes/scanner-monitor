@@ -30,7 +30,7 @@ func main() {
 
 	w := worker.NewMonitor(aiRepo, fsRepo)
 
-	errChan := w.Monitoring(ctx)
+	errChan := w.Monitoring(ctx, config.Env.FilePathBase, config.Env.DirPathBase)
 
 	for err := range errChan {
 		returnFatalError(err)

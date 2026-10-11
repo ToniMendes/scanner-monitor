@@ -48,6 +48,9 @@ func (open *OpenAI) AnalyzePDF(
 	ctx context.Context,
 	file *os.File,
 ) (*domain.ParametersPDF, error) {
+	if file == nil {
+		return nil, errors.New("arquivo PDF não informado")
+	}
 	defer func() {
 		if err := file.Close(); err != nil {
 			fmt.Println("Error closing file: " + err.Error())

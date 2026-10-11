@@ -6,8 +6,8 @@ import (
 )
 
 type FileSystemRepository interface {
-	GetPdf(ctx context.Context, pathChan chan<- *os.File) error
-	CreateFolder(string) (string, error)
+	GetPdf(ctx context.Context, pathChan chan<- *os.File, filePathBase string) error
+	CreateFolder(classificationName, dirBasePath string) (string, error)
 	MovePDF(string, string) error
 }
 
