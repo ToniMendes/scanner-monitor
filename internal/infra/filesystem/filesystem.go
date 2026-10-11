@@ -2,7 +2,10 @@
 package filesystem
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,7 +15,14 @@ import (
 	"time"
 )
 
-type FileSystem struct{ pollInterval time.Duration }
+type FileSystem struct {
+	pollInterval time.Duration
+	publish      func(string, string) error
+	removeSource func(string, os.FileInfo) error
+}
+
+var moveGate = make(chan struct{}, 1)
+var ErrDuplicate = errors.New("PDF idêntico já existe no destino; origem preservada para revisão")
 
 func NewFileSystem() *FileSystem {
 	return &FileSystem{}
@@ -36,6 +46,7 @@ func (f *FileSystem) GetPdf(
 	defer ticker.Stop()
 
 	seen := make(map[string]os.FileInfo)
+	observed := make(map[string]os.FileInfo)
 
 	for {
 		select {
@@ -81,6 +92,11 @@ func (f *FileSystem) GetPdf(
 					if previous, ok := seen[path]; ok && os.SameFile(previous, info) && previous.Size() == info.Size() && previous.ModTime().Equal(info.ModTime()) {
 						return nil
 					}
+					previous, stable := observed[path]
+					observed[path] = info
+					if !stable || !os.SameFile(previous, info) || previous.Size() != info.Size() || !previous.ModTime().Equal(info.ModTime()) || info.Size() == 0 {
+						return nil
+					}
 
 					file, err := os.Open(path)
 					if err != nil {
@@ -91,7 +107,13 @@ func (f *FileSystem) GetPdf(
 						)
 					}
 
+					if !completePDF(file, info.Size()) {
+						file.Close()
+						return nil
+					}
 					select {
+					// Tamanho estável e marcadores PDF são uma heurística,
+					// não uma validação completa do formato.
 					case filePDF <- file:
 						seen[path] = info
 
@@ -117,6 +139,11 @@ func (f *FileSystem) GetPdf(
 					delete(seen, path)
 				}
 			}
+			for path := range observed {
+				if !present[path] {
+					delete(observed, path)
+				}
+			}
 		}
 	}
 }
@@ -134,7 +161,7 @@ func (f *FileSystem) CreateFolder(classificationName, dirBase string) (string, e
 	)
 
 	// 0755 define as permissões (no Windows, o SO aplica a ACL padrão do usuário)
-	err := os.Mkdir(dirPath, 0755)
+	err := os.MkdirAll(dirPath, 0755)
 	if err != nil {
 		if os.IsExist(err) {
 			info, statErr := os.Stat(dirPath)
@@ -158,6 +185,20 @@ func (f *FileSystem) MovePDF(
 	sourcePath string,
 	destinationDir string,
 ) error {
+	return f.MovePDFContext(context.Background(), sourcePath, destinationDir)
+}
+
+// MovePDFContext publica apenas cópias completas, sem sobrescrever o destino.
+func (f *FileSystem) MovePDFContext(ctx context.Context, sourcePath, destinationDir string) error {
+	select {
+	case moveGate <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-moveGate }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(sourcePath) == "" || strings.TrimSpace(destinationDir) == "" {
 		return fmt.Errorf("origem e destino são obrigatórios")
 	}
@@ -197,31 +238,140 @@ func (f *FileSystem) MovePDF(
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("origem não é um arquivo regular")
 	}
+	temp, err := os.CreateTemp(destinationDir, ".scanner-*.partial")
+	if err != nil {
+		return fmt.Errorf("erro ao criar temporário: %w", err)
+	}
+	defer func() { temp.Close(); os.Remove(temp.Name()) }()
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(temp, hash), &contextReader{ctx: ctx, reader: input}); err != nil {
+		return fmt.Errorf("erro ao copiar PDF: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	after, err := input.Stat()
+	if err != nil {
+		return err
+	}
+	if after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
+		return errors.New("origem alterada durante a cópia; tente novamente quando estiver estável")
+	}
+	if err := input.Close(); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(destinationDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".pdf") {
+			continue
+		}
+		entryInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !entryInfo.Mode().IsRegular() {
+			continue
+		}
+		candidate := filepath.Join(destinationDir, entry.Name())
+		identical, err := sameContent(ctx, candidate, info.Size(), hash.Sum(nil))
+		if err != nil {
+			return err
+		}
+		if identical {
+			return fmt.Errorf("%w: %s", ErrDuplicate, candidate)
+		}
+	}
 	ext := filepath.Ext(fileName)
 	stem := strings.TrimSuffix(fileName, ext)
 	for n := 0; ; n++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if n > 0 {
 			destinationPath = filepath.Join(destinationDir, fmt.Sprintf("%s (%d)%s", stem, n, ext))
 		}
-		output, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		publish := f.publish
+		if publish == nil {
+			publish = os.Link
+		}
+		err := publish(temp.Name(), destinationPath)
 		if os.IsExist(err) {
 			continue
 		}
 		if err != nil {
 			return fmt.Errorf("erro ao reservar destino: %w", err)
 		}
-		_, copyErr := io.Copy(output, input)
-		closeErr := output.Close()
-		if copyErr != nil || closeErr != nil {
-			cleanupErr := os.Remove(destinationPath)
-			return fmt.Errorf("erro ao copiar PDF: cópia=%v fechamento=%v limpeza=%v", copyErr, closeErr, cleanupErr)
+		remove := f.removeSource
+		if remove == nil {
+			remove = removeUnchanged
 		}
-		if err := input.Close(); err != nil {
-			return fmt.Errorf("erro ao fechar origem; cópia preservada: %w", err)
-		}
-		if err := os.Remove(sourcePath); err != nil {
+		if err := remove(sourcePath, info); err != nil {
 			return fmt.Errorf("erro ao remover origem; cópia preservada em %q: %w", destinationPath, err)
 		}
 		return nil
 	}
+}
+
+// completePDF é uma heurística: exige cabeçalho, EOF e estabilidade prévia.
+func completePDF(file *os.File, size int64) bool {
+	header := make([]byte, 5)
+	if _, err := file.ReadAt(header, 0); err != nil || string(header) != "%PDF-" {
+		return false
+	}
+	start := size - 1024
+	if start < 0 {
+		start = 0
+	}
+	tail := make([]byte, size-start)
+	if _, err := file.ReadAt(tail, start); err != nil {
+		return false
+	}
+	return bytes.HasSuffix(bytes.TrimSpace(tail), []byte("%%EOF"))
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+func sameContent(ctx context.Context, path string, size int64, digest []byte) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != size {
+		return false, nil
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, &contextReader{ctx: ctx, reader: file}); err != nil {
+		return false, err
+	}
+	return bytes.Equal(hash.Sum(nil), digest), nil
+}
+func removeUnchanged(path string, before os.FileInfo) error {
+	now, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(before, now) || before.Size() != now.Size() || !before.ModTime().Equal(now.ModTime()) {
+		return errors.New("origem substituída ou alterada; arquivo preservado")
+	}
+	return os.Remove(path)
 }

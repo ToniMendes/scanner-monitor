@@ -9,23 +9,25 @@ import (
 )
 
 type Config struct {
-	OpenaiSDKKey string `mapstructure:"CHATGPT_SDK_KEY"`
-	ModelOpenAI  string `mapstructure:"MODEL_OPENAI"`
-	FilePathBase string `mapstructure:"FILE_PATH_BASE"`
-	DirPathBase  string `mapstructure:"DIR_PATH_BASE"`
+	OpenaiSDKKey   string `mapstructure:"CHATGPT_SDK_KEY"`
+	ModelOpenAI    string `mapstructure:"MODEL_OPENAI"`
+	FilePathBase   string `mapstructure:"FILE_PATH_BASE"`
+	DirPathBase    string `mapstructure:"DIR_PATH_BASE"`
+	ReviewRequired bool   `mapstructure:"REVIEW_REQUIRED"`
 }
 
 var Env *Config
 
 func StartViper() error {
 	viper := viper.New()
+	viper.SetDefault("REVIEW_REQUIRED", true)
 	viper.SetConfigName(".env") // Nome do arquivo sem a extensão
 	viper.SetConfigType("env")  // Formato do arquivo
 	viper.AddConfigPath(".")    // Caminho (diretório raiz do projeto)
 
 	// Permite que variáveis de ambiente do SO sobrescrevam as do arquivo
 	viper.AutomaticEnv()
-	for _, key := range []string{"CHATGPT_SDK_KEY", "MODEL_OPENAI", "FILE_PATH_BASE", "DIR_PATH_BASE"} {
+	for _, key := range []string{"CHATGPT_SDK_KEY", "MODEL_OPENAI", "FILE_PATH_BASE", "DIR_PATH_BASE", "REVIEW_REQUIRED"} {
 		if err := viper.BindEnv(key); err != nil {
 			return err
 		}

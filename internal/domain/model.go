@@ -10,7 +10,7 @@ type ParametersPDF struct {
 }
 
 func NewParametersPDF(classificationName string) (*ParametersPDF, error) {
-	newClassificationName := strings.ToUpper(
+	newClassificationName := strings.ToLower(
 		strings.TrimSpace(
 			strings.Replace(classificationName, " ", "", -1),
 		),
@@ -19,8 +19,13 @@ func NewParametersPDF(classificationName string) (*ParametersPDF, error) {
 	if newClassificationName == "" {
 		return nil, errors.New("invalid classification name")
 	}
+	switch newClassificationName {
+	case "atestado", "carteira_vacinacao", "documento_aluno", "formulario", "outro":
+	default:
+		return nil, errors.New("invalid classification category")
+	}
 
 	return &ParametersPDF{
-		ClassificationName: classificationName,
+		ClassificationName: newClassificationName,
 	}, nil
 }

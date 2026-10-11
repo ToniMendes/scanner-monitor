@@ -32,9 +32,13 @@ type fakeFS struct {
 	files                       []*os.File
 	scanErr, folderErr, moveErr error
 	moves                       atomic.Int32
+	scans                       atomic.Int32
 }
 
 func (f *fakeFS) GetPdf(ctx context.Context, out chan<- *os.File, root string) error {
+	if f.scans.Add(1) > 1 {
+		return nil
+	}
 	for _, file := range f.files {
 		select {
 		case out <- file:
@@ -62,6 +66,7 @@ func TestMonitor(t *testing.T) {
 					t.Fatal(err)
 				}
 				fs.files = append(fs.files, file)
+				t.Cleanup(func() { file.Close() })
 			}
 			switch scenario {
 			case "scan error":
@@ -82,8 +87,16 @@ func TestMonitor(t *testing.T) {
 			defer cancel()
 			if scenario == "cancelled" {
 				cancel()
+				// Os arquivos pré-abertos pertencem ao fake; o scanner real
+				// não abre arquivos quando o contexto já está cancelado.
+				for _, file := range fs.files {
+					file.Close()
+				}
 			}
-			ch := NewMonitor(ai, fs).Monitoring(ctx, "input", "output")
+			monitor := NewMonitor(ai, fs)
+			monitor.MaxAttempts = 1
+			monitor.RetryDelay = time.Millisecond
+			ch := monitor.Monitoring(ctx, "input", "output")
 			done := make(chan []error, 1)
 			go func() {
 				var errs []error

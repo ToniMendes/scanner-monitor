@@ -3,6 +3,7 @@ package filesystem
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -36,8 +37,8 @@ func TestCreateFolder(t *testing.T) {
 		})
 	}
 	t.Run("missing base", func(t *testing.T) {
-		if _, err := NewFileSystem().CreateFolder("outro", filepath.Join(t.TempDir(), "missing")); err == nil {
-			t.Fatal("expected error")
+		if _, err := NewFileSystem().CreateFolder("outro", filepath.Join(t.TempDir(), "missing")); err != nil {
+			t.Fatal(err)
 		}
 	})
 	t.Run("empty base", func(t *testing.T) {
@@ -110,7 +111,7 @@ func TestMovePDFConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 12; i++ {
 		src := filepath.Join(t.TempDir(), "same.pdf")
-		writePDF(t, src, "pdf")
+		writePDF(t, src, fmt.Sprintf("pdf %d", i))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -142,7 +143,7 @@ func TestGetPDFCancellationAndMissingPath(t *testing.T) {
 }
 func TestGetPDFVariations(t *testing.T) {
 	root := t.TempDir()
-	writePDF(t, filepath.Join(root, "a.PDF"), "pdf")
+	writePDF(t, filepath.Join(root, "a.PDF"), "%PDF-1.7\nbody\n%%EOF")
 	writePDF(t, filepath.Join(root, "ignore.txt"), "text")
 	if err := os.Mkdir(filepath.Join(root, "nested"), 0700); err != nil {
 		t.Fatal(err)
@@ -180,17 +181,17 @@ func TestGetPDFVariations(t *testing.T) {
 }
 func TestGetPDFBlockedSendCancellation(t *testing.T) {
 	root := t.TempDir()
-	writePDF(t, filepath.Join(root, "a.pdf"), "pdf")
+	writePDF(t, filepath.Join(root, "a.pdf"), "%PDF-1.7\nbody\n%%EOF")
 	ctx, cancel := context.WithTimeout(context.Background(), 2300*time.Millisecond)
 	defer cancel()
-	if err := NewFileSystem().GetPdf(ctx, make(chan *os.File), root); !errors.Is(err, context.DeadlineExceeded) {
+	if err := (&FileSystem{pollInterval: 10 * time.Millisecond}).GetPdf(ctx, make(chan *os.File), root); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
 }
 func TestGetPDFReplacement(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "scan.pdf")
-	writePDF(t, path, "first")
+	writePDF(t, path, "%PDF-1.7\nfirst\n%%EOF")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	files := make(chan *os.File)
@@ -210,7 +211,7 @@ func TestGetPDFReplacement(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	writePDF(t, path, "replacement with different size")
+	writePDF(t, path, "%PDF-1.7\nreplacement with different size\n%%EOF")
 	receive()
 	cancel()
 	select {

@@ -27,7 +27,7 @@ O objetivo é reduzir o trabalho manual depois de usar o scanner de uma impresso
 2. O Scanner Monitor verifica essa pasta a cada **dois segundos**.
 3. Cada novo PDF é aberto e enviado à API da OpenAI.
 4. O modelo analisa o documento e retorna sua categoria em JSON, usando um schema com opções predefinidas.
-5. O programa cria ou reutiliza a pasta da categoria no diretório de saída.
+5. O programa cria ou reutiliza a pasta da categoria dentro de `revisao`, quando a revisão manual está habilitada (padrão).
 6. O PDF é **movido**, preservando o nome original quando disponível. Colisões recebem sufixos numéricos, sem sobrescrever o arquivo existente.
 
 ```mermaid
@@ -66,7 +66,7 @@ organizados/
     └── scan_003.pdf
 ```
 
-As pastas das categorias são criadas conforme necessário. A pasta base de saída deve existir previamente.
+As pastas das categorias e a pasta base de saída são criadas conforme necessário. Com `REVIEW_REQUIRED=true`, os PDFs aguardam aprovação em `organizados/revisao/<categoria>`.
 
 ## Tecnologias
 
@@ -124,6 +124,7 @@ DIR_PATH_BASE=C:\Scanner\organizados
 | `MODEL_OPENAI` | Identificador do modelo usado na classificação | Sim |
 | `FILE_PATH_BASE` | Pasta de entrada dos PDFs | Sim |
 | `DIR_PATH_BASE` | Pasta base de saída das categorias | Sim |
+| `REVIEW_REQUIRED` | `true`: aguarda aprovação manual; `false`: organiza automaticamente | Não; padrão `true` |
 
 Os valores acima são placeholders: substitua-os por credenciais e um modelo disponíveis na sua conta. O programa rejeita valores vazios.
 
@@ -133,19 +134,35 @@ O arquivo `.env` deve existir no **diretório de trabalho da execução**. Na co
 
 Configure `FILE_PATH_BASE` e `DIR_PATH_BASE` no `.env`. Prefira caminhos absolutos. O monitor normaliza a barra final da entrada antes de procurar PDFs.
 
-Crie as duas pastas antes de iniciar:
+Crie a pasta de entrada antes de iniciar (a saída será criada automaticamente):
 
 ```powershell
-New-Item -ItemType Directory -Force -Path 'C:\Scanner\entrada', 'C:\Scanner\organizados'
+New-Item -ItemType Directory -Force -Path 'C:\Scanner\entrada'
 ```
 
-Configure o software do scanner para salvar seus PDFs em `C:\Scanner\entrada`. Use uma pasta de saída separada. A movimentação copia para um destino reservado exclusivamente e remove a origem apenas após concluir a cópia; isso também permite usar volumes distintos.
+Configure o software do scanner para salvar seus PDFs em `C:\Scanner\entrada`. Use uma pasta de saída separada. A movimentação grava um temporário `.scanner-*.partial`, sincroniza o conteúdo e publica o PDF completo por hard link sem sobrescrever o destino. A origem só é removida após a publicação. Entrada e saída podem estar em volumes distintos; o volume de saída precisa suportar hard links, como NTFS. Se não suportar, a movimentação retorna erro e preserva a origem.
 
 ### Arquivos repetidos
 
-Se `scan.pdf` já existir na categoria, o novo arquivo será salvo como `scan (1).pdf`, depois `scan (2).pdf`, e assim por diante. A reserva exclusiva do nome impede sobrescritas mesmo com chamadas concorrentes. PDFs com conteúdo idêntico também são preservados: não há deduplicação por conteúdo.
+Se `scan.pdf` já existir na categoria com conteúdo diferente, o novo arquivo será salvo como `scan (1).pdf`, depois `scan (2).pdf`, e assim por diante. A criação exclusiva impede sobrescritas mesmo com chamadas concorrentes. O SHA-256 é comparado com PDFs na mesma pasta de destino: quando já existe conteúdo idêntico, nenhuma nova cópia é publicada e a origem fica preservada para revisão. A detecção é local à categoria (ou à categoria de revisão), não global.
 
 Durante o monitoramento, um PDF já enviado não é reenviado enquanto sua identidade, tamanho e data de modificação permanecerem iguais. Um arquivo substituído ou alterado no mesmo caminho volta a ser elegível. Esse controle fica em memória e é reiniciado com a aplicação.
+
+### Recuperação e revisão manual
+
+Cada etapa (classificação, criação de pasta e movimentação) tem até três tentativas, com esperas de um e dois segundos. A classificação já obtida é reutilizada quando apenas a pasta ou a movimentação falha. Cada tentativa recebe um contexto com prazo de um minuto; a cópia e as chamadas à API respeitam o cancelamento. Após esgotar as tentativas, o erro é registrado e os demais arquivos continuam. O PDF permanece na entrada quando ainda não foi movido; para tentar novamente depois de resolver a causa, reinicie o monitor ou substitua o arquivo. A fila de tentativas fica em memória.
+
+Falhas ao acessar a pasta de entrada são registradas, e o monitor tenta restabelecer a leitura. Configuração inválida impede a inicialização. `Ctrl+C` interrompe novas tentativas e solicita o encerramento dos trabalhos em andamento.
+
+Antes do upload, o PDF precisa manter identidade, tamanho e data de modificação em duas verificações consecutivas (intervalo padrão de dois segundos), ter cabeçalho `%PDF-` e terminar em `%%EOF`. Isso reduz o risco de ler arquivos em gravação, mas é uma heurística: não substitui um parser PDF nem garante que outro programa não reabra o arquivo. Alterações durante a classificação ou cópia são detectadas e retornam erro.
+
+Com `REVIEW_REQUIRED=true`, confira o documento na pasta de revisão e aprove a categoria pelo terminal. É possível corrigir a sugestão da IA ao escolher outra categoria válida:
+
+```powershell
+go run ./cmd/review -base 'C:\Scanner\organizados' -file 'C:\Scanner\organizados\revisao\outro\scan.pdf' -category atestado
+```
+
+A aprovação aceita apenas PDFs dentro da pasta de revisão e as categorias listadas neste README. Para organização automática, defina `REVIEW_REQUIRED=false` no `.env`. A qualidade da classificação continua dependente do modelo e do documento.
 
 ## Execução
 
@@ -155,7 +172,7 @@ Execute a partir da raiz do projeto, onde está o `.env`:
 go run ./cmd/server
 ```
 
-Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer na pasta correspondente à classificação, dentro da saída.
+Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer em `revisao/<categoria>` dentro da saída, aguardando aprovação; com revisão desabilitada, irá diretamente para a categoria.
 
 Também é possível compilar e executar no Windows:
 
@@ -218,12 +235,13 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 
 ## Limitações atuais
 
-- **Erros encerram a aplicação:** os erros encaminhados ao processo principal são tratados com `log.Fatal`; não há recuperação automática ou fila de novas tentativas.
-- **Criação de pastas:** a pasta base precisa existir. Falhas e colisões com arquivos são retornadas ao monitor.
-- **PDF em gravação:** não há verificação de que o scanner terminou de escrever o arquivo antes do upload. Para os primeiros testes, coloque PDFs já completos na entrada.
-- **Movimentação por cópia:** se a remoção da origem falhar, a cópia de destino é preservada e um erro é retornado. A operação completa não é atômica; uma interrupção do processo pode deixar uma cópia parcial. Não há deduplicação por conteúdo.
-- **Classificação sujeita a revisão:** o resultado depende do conteúdo e do modelo. Não há etapa de confirmação manual.
-- **Encerramento:** o monitor cancela o trabalho após o primeiro erro e fecha o canal de erros quando suas goroutines terminam. Chamadas em andamento dependem de as implementações respeitarem o contexto.
+- **Novas tentativas em memória:** há três tentativas por etapa, sem fila persistente. Falhas definitivas precisam de intervenção ou reinício para reprocessar o mesmo arquivo.
+- **Colisões de pastas:** diretórios são criados automaticamente, mas um arquivo existente no lugar de uma pasta não é substituído; a falha é registrada.
+- **PDF em gravação:** estabilidade e marcadores são heurísticas, sem validação completa da estrutura do PDF. Arquivos vazios, incompletos ou sem os marcadores ficam aguardando na entrada.
+- **Interrupção da cópia:** uma queda pode deixar um `.partial` que não é tratado como PDF. A publicação do destino é exclusiva, mas publicação e remoção da origem não constituem uma única transação. Se a remoção falhar, ambas as cópias são preservadas, e as novas tentativas detectam a duplicata. Temporários deixados por uma interrupção precisam de limpeza manual com o monitor parado.
+- **Deduplicação:** considera PDFs na mesma pasta de destino; a origem idêntica fica preservada para decisão manual. Não há índice persistente nem comparação entre categorias.
+- **Classificação:** a revisão manual está habilitada por padrão, mas depende da conferência humana; a IA não garante uma categoria correta.
+- **Encerramento:** erros por arquivo não cancelam o monitor. O canal de erros fecha após o encerramento das goroutines; chamadas e operações do sistema operacional precisam cooperar com o contexto para terminar prontamente.
 
 ## Solução de problemas
 
@@ -254,7 +272,6 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 Sugestões para evoluir a implementação:
 
 - Configurar intervalo de monitoramento e quantidade de workers pelo `.env`.
-- Esperar o término da gravação dos PDFs antes do processamento.
-- Implementar novas tentativas e deduplicação opcional por conteúdo.
+- Adicionar fila persistente de tentativas e índice de deduplicação entre categorias.
 - Ampliar testes para falhas de disco e permissões em diferentes sistemas operacionais.
-- Permitir revisão manual das classificações e gestão dos arquivos enviados à API.
+- Adicionar interface gráfica para revisão e gestão dos arquivos enviados à API.
