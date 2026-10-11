@@ -1,10 +1,16 @@
 package domain
 
+import (
+	"context"
+	"os"
+)
+
 type FileSystemRepository interface {
-	GetPdf(pathChan chan<- string) error
-	MakeDir(mkdirChan <-chan string) error
+	GetPdf(ctx context.Context, pathChan chan<- *os.File) error
+	CreateFolder(string) (string, error)
+	MovePDF(string, string) error
 }
 
 type GeminiAIRepository interface {
-	ReadPath(<-chan string, chan<- string) error
+	AnalyzePDF(context.Context, *os.File) (*ParametersPDF, error)
 }

@@ -1,24 +1,40 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
+	"os/signal"
 	"scanner-monitor/internal/config"
 	"scanner-monitor/internal/infra/ai"
+	"scanner-monitor/internal/infra/filesystem"
+	"scanner-monitor/internal/worker"
+	"syscall"
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
 	err := config.StartViper()
 	returnFatalError(err)
 
-	openaiClient := ai.NewOpenAI()
-	openaiClient.OpenAIClient()
+	aiRepo, errAi := ai.NewOpenAI(config.Env.ModelOpenAI, config.Env.OpenaiSDKKey)
+	returnFatalError(errAi)
 
-	//aiRepo := ai.NewOpenAI()
-	//fsRepo := filesystem.NewFileSystem()
-	//
-	//app := di.NewApp(fsRepo, aiRepo)
-	//err = app.ToExecute()
-	//returnFatalError(err)
+	fsRepo := filesystem.NewFileSystem()
+
+	w := worker.NewMonitor(aiRepo, fsRepo)
+
+	errChan := w.Monitoring(ctx)
+
+	for err := range errChan {
+		returnFatalError(err)
+	}
 }
 
 func returnFatalError(err error) {

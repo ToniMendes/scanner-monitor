@@ -8,8 +8,8 @@ import (
 )
 
 type Config struct {
-	GeminiAPIKey string `mapstructure:"GEMINI_API_KEY"`
-	GPTAPIKey    string `mapstructure:"CHATGPT_API_KEY"`
+	OpenaiSDKKey string `mapstructure:"CHATGPT_SDK_KEY"`
+	ModelOpenAI  string `mapstructure:"MODEL_OPENAI"`
 }
 
 var Env *Config
