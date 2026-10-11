@@ -5,12 +5,11 @@ import (
 	"fmt"
 
 	"github.com/spf13/viper"
-
 )
 
 type Config struct {
 	GeminiAPIKey string `mapstructure:"GEMINI_API_KEY"`
-	ChatGPTAPIKey string `mapstructure:"CHATGPT_API_KEY"`
+	GPTAPIKey    string `mapstructure:"CHATGPT_API_KEY"`
 }
 
 var Env *Config
