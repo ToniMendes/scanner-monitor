@@ -252,7 +252,7 @@ scanner-monitor/
 └── README.md
 ```
 
-O domínio define os contratos consumidos pelo monitor, enquanto as implementações de infraestrutura realizam chamadas à API e operações em disco. A interface de IA ainda se chama `GeminiAIRepository`, mas a implementação utilizada pelo programa é a **OpenAI**.
+O domínio define os contratos consumidos pelo monitor, enquanto as implementações de infraestrutura realizam chamadas à API e operações em disco. A interface de IA `OpenAIRepository`.
 
 ## Verificação
 

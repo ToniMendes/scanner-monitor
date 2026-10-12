@@ -11,6 +11,6 @@ type FileSystemRepository interface {
 	MovePDF(string, string) error
 }
 
-type GeminiAIRepository interface {
+type OpenAIRepository interface {
 	AnalyzePDF(context.Context, *os.File) (*ParametersPDF, error)
 }

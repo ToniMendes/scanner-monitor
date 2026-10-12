@@ -12,13 +12,13 @@ import (
 )
 
 type Monitor struct {
-	ai          domain.GeminiAIRepository
+	ai          domain.OpenAIRepository
 	fs          domain.FileSystemRepository
 	RetryDelay  time.Duration
 	MaxAttempts int
 }
 
-func NewMonitor(aiRepo domain.GeminiAIRepository, fsRepo domain.FileSystemRepository) *Monitor {
+func NewMonitor(aiRepo domain.OpenAIRepository, fsRepo domain.FileSystemRepository) *Monitor {
 	return &Monitor{
 		ai:          aiRepo,
 		fs:          fsRepo,
