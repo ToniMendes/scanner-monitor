@@ -284,6 +284,7 @@ func (f *FileSystem) MovePDFContext(ctx context.Context, sourcePath, destination
 			return err
 		}
 		if identical {
+			fmt.Printf("[PDF %q] Conteúdo idêntico encontrado em %q; origem preservada.\n", sourcePath, candidate)
 			return fmt.Errorf("%w: %s", ErrDuplicate, candidate)
 		}
 	}
@@ -312,8 +313,10 @@ func (f *FileSystem) MovePDFContext(ctx context.Context, sourcePath, destination
 			remove = removeUnchanged
 		}
 		if err := remove(sourcePath, info); err != nil {
+			fmt.Printf("[PDF %q] Cópia publicada em %q, mas a origem não foi removida: %v\n", sourcePath, destinationPath, err)
 			return fmt.Errorf("erro ao remover origem; cópia preservada em %q: %w", destinationPath, err)
 		}
+		fmt.Printf("[PDF %q] Movido com sucesso para %q.\n", sourcePath, destinationPath)
 		return nil
 	}
 }

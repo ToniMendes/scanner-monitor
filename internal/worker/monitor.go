@@ -5,18 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"scanner-monitor/internal/domain"
 	"sync"
 	"time"
 )
 
 type Monitor struct {
-	ai             domain.GeminiAIRepository
-	fs             domain.FileSystemRepository
-	RetryDelay     time.Duration
-	MaxAttempts    int
-	ReviewRequired bool
+	ai          domain.GeminiAIRepository
+	fs          domain.FileSystemRepository
+	RetryDelay  time.Duration
+	MaxAttempts int
 }
 
 func NewMonitor(aiRepo domain.GeminiAIRepository, fsRepo domain.FileSystemRepository) *Monitor {
@@ -29,6 +27,7 @@ func NewMonitor(aiRepo domain.GeminiAIRepository, fsRepo domain.FileSystemReposi
 }
 
 func (m *Monitor) Monitoring(ctx context.Context, filePathBase, dirPathBase string) chan error {
+	fmt.Printf("Monitorando PDFs em %q. Destino: %q\n", filePathBase, dirPathBase)
 	ctx, cancel := context.WithCancel(ctx)
 	worker := 20
 	var wg sync.WaitGroup
@@ -78,10 +77,15 @@ func (m *Monitor) Monitoring(ctx context.Context, filePathBase, dirPathBase stri
 				}
 				name := file.Name()
 				if _, loaded := active.LoadOrStore(name, true); loaded {
+					fmt.Printf("[PDF %q] Já está sendo processado; ignorando envio repetido.\n", name)
 					file.Close()
 					continue
 				}
-				report(m.process(ctx, file, dirPathBase))
+				fmt.Printf("[PDF %q] Iniciando processamento.\n", name)
+				if err := m.process(ctx, file, dirPathBase); err != nil {
+					fmt.Printf("[PDF %q] Processamento não concluído: %v\n", name, err)
+					report(err)
+				}
 				active.Delete(name)
 			}
 
@@ -92,6 +96,7 @@ func (m *Monitor) Monitoring(ctx context.Context, filePathBase, dirPathBase stri
 		wg.Wait()
 		cancel()
 		close(errChan)
+		fmt.Println("Monitoramento de PDFs encerrado.")
 	}()
 
 	return errChan
@@ -123,12 +128,14 @@ func (m *Monitor) retry(ctx context.Context, stage string, fn func(context.Conte
 			return ctx.Err()
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		fmt.Printf("[%s] Tentativa %d/%d.\n", stage, i+1, attempts)
 		err = fn(attemptCtx)
 		cancel()
 		if err == nil {
 			return nil
 		}
 		if i+1 < attempts {
+			fmt.Printf("[%s] Falha: %v. Aguardando para tentar novamente.\n", stage, err)
 			if waitErr := wait(ctx, m.RetryDelay*time.Duration(1<<i)); waitErr != nil {
 				return waitErr
 			}
@@ -142,6 +149,7 @@ func (m *Monitor) process(ctx context.Context, file *os.File, base string) error
 	file.Close()
 	var model *domain.ParametersPDF
 	if err := m.retry(ctx, "classificação de "+name, func(attempt context.Context) error {
+		fmt.Printf("[PDF %q] Abrindo e lendo o PDF.\n", name)
 		input, err := os.Open(name)
 		if err != nil {
 			return err
@@ -171,18 +179,18 @@ func (m *Monitor) process(ctx context.Context, file *os.File, base string) error
 	}); err != nil {
 		return err
 	}
-	if m.ReviewRequired {
-		base = filepath.Join(base, "revisao")
-	}
+	fmt.Printf("[PDF %q] Classificação recebida: %s.\n", name, model.ClassificationName)
 	var dir string
 	if err := m.retry(ctx, "criação de pasta para "+name, func(context.Context) error {
+		fmt.Printf("[PDF %q] Preparando pasta da categoria %q em %q.\n", name, model.ClassificationName, base)
 		var err error
 		dir, err = m.fs.CreateFolder(model.ClassificationName, base)
 		return err
 	}); err != nil {
 		return err
 	}
-	return m.retry(ctx, "movimentação de "+name, func(attempt context.Context) error {
+	err := m.retry(ctx, "movimentação de "+name, func(attempt context.Context) error {
+		fmt.Printf("[PDF %q] Movendo para %q.\n", name, dir)
 		if fs, ok := m.fs.(interface {
 			MovePDFContext(context.Context, string, string) error
 		}); ok {
@@ -190,4 +198,8 @@ func (m *Monitor) process(ctx context.Context, file *os.File, base string) error
 		}
 		return m.fs.MovePDF(name, dir)
 	})
+	if err == nil {
+		fmt.Printf("[PDF %q] Movimentação concluída.\n", name)
+	}
+	return err
 }

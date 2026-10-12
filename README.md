@@ -27,7 +27,7 @@ O objetivo é reduzir o trabalho manual depois de usar o scanner de uma impresso
 2. O Scanner Monitor verifica essa pasta a cada **dois segundos**.
 3. Cada novo PDF é aberto e enviado à API da OpenAI.
 4. O modelo analisa o documento e retorna sua categoria em JSON, usando um schema com opções predefinidas.
-5. O programa cria ou reutiliza a pasta da categoria dentro de `revisao`, quando a revisão manual está habilitada (padrão).
+5. O programa cria ou reutiliza a pasta da categoria no diretório de saída.
 6. O PDF é **movido**, preservando o nome original quando disponível. Colisões recebem sufixos numéricos, sem sobrescrever o arquivo existente.
 
 ```mermaid
@@ -66,7 +66,7 @@ organizados/
     └── scan_003.pdf
 ```
 
-As pastas das categorias e a pasta base de saída são criadas conforme necessário. Com `REVIEW_REQUIRED=true`, os PDFs aguardam aprovação em `organizados/revisao/<categoria>`.
+As pastas das categorias e a pasta base de saída são criadas conforme necessário. Os PDFs são organizados automaticamente na categoria sugerida pela IA.
 
 ## Tecnologias
 
@@ -124,7 +124,6 @@ DIR_PATH_BASE=C:\Scanner\organizados
 | `MODEL_OPENAI` | Identificador do modelo usado na classificação | Sim |
 | `FILE_PATH_BASE` | Pasta de entrada dos PDFs | Sim |
 | `DIR_PATH_BASE` | Pasta base de saída das categorias | Sim |
-| `REVIEW_REQUIRED` | `true`: aguarda aprovação manual; `false`: organiza automaticamente | Não; padrão `true` |
 
 Os valores acima são placeholders: substitua-os por credenciais e um modelo disponíveis na sua conta. O programa rejeita valores vazios.
 
@@ -144,11 +143,11 @@ Configure o software do scanner para salvar seus PDFs em `C:\Scanner\entrada`. U
 
 ### Arquivos repetidos
 
-Se `scan.pdf` já existir na categoria com conteúdo diferente, o novo arquivo será salvo como `scan (1).pdf`, depois `scan (2).pdf`, e assim por diante. A criação exclusiva impede sobrescritas mesmo com chamadas concorrentes. O SHA-256 é comparado com PDFs na mesma pasta de destino: quando já existe conteúdo idêntico, nenhuma nova cópia é publicada e a origem fica preservada para revisão. A detecção é local à categoria (ou à categoria de revisão), não global.
+Se `scan.pdf` já existir na categoria com conteúdo diferente, o novo arquivo será salvo como `scan (1).pdf`, depois `scan (2).pdf`, e assim por diante. A criação exclusiva impede sobrescritas mesmo com chamadas concorrentes. O SHA-256 é comparado com PDFs na mesma pasta de destino: quando já existe conteúdo idêntico, nenhuma nova cópia é publicada e a origem fica preservada. A detecção é local à categoria, não global.
 
 Durante o monitoramento, um PDF já enviado não é reenviado enquanto sua identidade, tamanho e data de modificação permanecerem iguais. Um arquivo substituído ou alterado no mesmo caminho volta a ser elegível. Esse controle fica em memória e é reiniciado com a aplicação.
 
-### Recuperação e revisão manual
+### Recuperação e acompanhamento
 
 Cada etapa (classificação, criação de pasta e movimentação) tem até três tentativas, com esperas de um e dois segundos. A classificação já obtida é reutilizada quando apenas a pasta ou a movimentação falha. Cada tentativa recebe um contexto com prazo de um minuto; a cópia e as chamadas à API respeitam o cancelamento. Após esgotar as tentativas, o erro é registrado e os demais arquivos continuam. O PDF permanece na entrada quando ainda não foi movido; para tentar novamente depois de resolver a causa, reinicie o monitor ou substitua o arquivo. A fila de tentativas fica em memória.
 
@@ -156,13 +155,7 @@ Falhas ao acessar a pasta de entrada são registradas, e o monitor tenta restabe
 
 Antes do upload, o PDF precisa manter identidade, tamanho e data de modificação em duas verificações consecutivas (intervalo padrão de dois segundos), ter cabeçalho `%PDF-` e terminar em `%%EOF`. Isso reduz o risco de ler arquivos em gravação, mas é uma heurística: não substitui um parser PDF nem garante que outro programa não reabra o arquivo. Alterações durante a classificação ou cópia são detectadas e retornam erro.
 
-Com `REVIEW_REQUIRED=true`, confira o documento na pasta de revisão e aprove a categoria pelo terminal. É possível corrigir a sugestão da IA ao escolher outra categoria válida:
-
-```powershell
-go run ./cmd/review -base 'C:\Scanner\organizados' -file 'C:\Scanner\organizados\revisao\outro\scan.pdf' -category atestado
-```
-
-A aprovação aceita apenas PDFs dentro da pasta de revisão e as categorias listadas neste README. Para organização automática, defina `REVIEW_REQUIRED=false` no `.env`. A qualidade da classificação continua dependente do modelo e do documento.
+O terminal mostra o arquivo em processamento, leitura do PDF, upload, espera pela resposta da IA, categoria recebida, preparação da pasta, tentativas e resultado da movimentação. O destino final é informado mesmo quando o nome recebe um sufixo. A organização é automática; a qualidade da classificação depende do modelo e do documento.
 
 ## Execução
 
@@ -172,7 +165,7 @@ Execute a partir da raiz do projeto, onde está o `.env`:
 go run ./cmd/server
 ```
 
-Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer em `revisao/<categoria>` dentro da saída, aguardando aprovação; com revisão desabilitada, irá diretamente para a categoria.
+Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer na pasta da categoria dentro da saída.
 
 Também é possível compilar e executar no Windows:
 
@@ -181,7 +174,7 @@ go build -o scanner-monitor.exe ./cmd/server
 .\scanner-monitor.exe
 ```
 
-Ao alterar o `.env`, reinicie o executável. Use `Ctrl+C` para solicitar o encerramento do processo. O programa não oferece interface gráfica ou servidor HTTP, apesar do nome do diretório `cmd/server`.
+Ao alterar o `.env`, reinicie o executável. Use `Ctrl+C` para solicitar o encerramento do processo. O programa não oferece interface gráfica ou servidor HTTP, apesar do nome do diretório `cmd/cli`.
 
 ### Dados enviados à API
 
@@ -240,7 +233,7 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 - **PDF em gravação:** estabilidade e marcadores são heurísticas, sem validação completa da estrutura do PDF. Arquivos vazios, incompletos ou sem os marcadores ficam aguardando na entrada.
 - **Interrupção da cópia:** uma queda pode deixar um `.partial` que não é tratado como PDF. A publicação do destino é exclusiva, mas publicação e remoção da origem não constituem uma única transação. Se a remoção falhar, ambas as cópias são preservadas, e as novas tentativas detectam a duplicata. Temporários deixados por uma interrupção precisam de limpeza manual com o monitor parado.
 - **Deduplicação:** considera PDFs na mesma pasta de destino; a origem idêntica fica preservada para decisão manual. Não há índice persistente nem comparação entre categorias.
-- **Classificação:** a revisão manual está habilitada por padrão, mas depende da conferência humana; a IA não garante uma categoria correta.
+- **Classificação:** a organização é automática; a IA não garante uma categoria correta.
 - **Encerramento:** erros por arquivo não cancelam o monitor. O canal de erros fecha após o encerramento das goroutines; chamadas e operações do sistema operacional precisam cooperar com o contexto para terminar prontamente.
 
 ## Solução de problemas
@@ -274,4 +267,4 @@ Sugestões para evoluir a implementação:
 - Configurar intervalo de monitoramento e quantidade de workers pelo `.env`.
 - Adicionar fila persistente de tentativas e índice de deduplicação entre categorias.
 - Ampliar testes para falhas de disco e permissões em diferentes sistemas operacionais.
-- Adicionar interface gráfica para revisão e gestão dos arquivos enviados à API.
+- Adicionar interface gráfica e gestão dos arquivos enviados à API.

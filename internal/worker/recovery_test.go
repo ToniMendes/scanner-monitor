@@ -55,14 +55,13 @@ func TestProcessRetriesEachStage(t *testing.T) {
 	fs := &stagedFS{failFolders: 1, failMoves: 2}
 	monitor := NewMonitor(ai, fs)
 	monitor.RetryDelay = time.Millisecond
-	monitor.ReviewRequired = true
 	if err := monitor.process(context.Background(), file, "output"); err != nil {
 		t.Fatal(err)
 	}
 	if ai.calls.Load() != 3 || fs.folders.Load() != 2 || fs.moveAttempts.Load() != 3 {
 		t.Fatalf("AI=%d folders=%d moves=%d", ai.calls.Load(), fs.folders.Load(), fs.moveAttempts.Load())
 	}
-	if fs.folder != filepath.Join("output", "revisao") {
+	if fs.folder != "output" {
 		t.Fatal(fs.folder)
 	}
 }

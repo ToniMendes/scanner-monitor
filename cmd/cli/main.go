@@ -35,7 +35,6 @@ func main() {
 	fsRepo := filesystem.NewFileSystem()
 
 	w := worker.NewMonitor(aiRepo, fsRepo)
-	w.ReviewRequired = config.Env.ReviewRequired
 
 	errChan := w.Monitoring(ctx, config.Env.FilePathBase, config.Env.DirPathBase)
 

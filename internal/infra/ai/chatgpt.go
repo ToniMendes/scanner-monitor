@@ -57,16 +57,19 @@ func (open *OpenAI) AnalyzePDF(
 		}
 	}()
 
+	fmt.Printf("[PDF %q] Enviando PDF para a OpenAI.\n", file.Name())
 	fileID, err := open.uploadPDF(ctx, file)
 	if err != nil {
 		return nil, err
 	}
 
+	fmt.Printf("[PDF %q] Upload concluído. Solicitando classificação e aguardando resposta da IA.\n", file.Name())
 	model, err := open.classifyPDF(ctx, fileID)
 	if err != nil {
 		return nil, err
 	}
 
+	fmt.Printf("[PDF %q] Resposta da IA recebida e interpretada.\n", file.Name())
 	return model, nil
 }
 
