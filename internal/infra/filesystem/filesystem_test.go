@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func writePDF(t *testing.T, path, content string) {
 	}
 }
 func TestCreateFolder(t *testing.T) {
-	for _, category := range []string{"atestado", "outro"} {
+	for _, category := range []string{"atestado", "outro", "sem identificação", "mariadasilva_52998224725", "COM10", "auxiliar"} {
 		t.Run(category, func(t *testing.T) {
 			base := t.TempDir()
 			for i := 0; i < 2; i++ {
@@ -71,6 +72,36 @@ func TestMovePDFDuplicates(t *testing.T) {
 	}
 	if _, err := os.Stat(input); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("source still exists: %v", err)
+	}
+}
+
+func TestCreateFolderRejectsInvalidWindowsComponents(t *testing.T) {
+	for i, name := range []string{
+		" ", "categoria ", "categoria.", "nome<aluno", "nome>aluno", `nome"aluno`,
+		"nome|aluno", "nome?aluno", "nome*aluno", "nome\x00aluno", "nome\naluno", "nome\taluno",
+		"CON", "con.pdf", "AUX", "aux.txt", "NUL", "PRN", "COM1", "COM9.pdf", "LPT1", "LPT9.txt",
+		"COM¹", "LPT²", "CON .txt", "CONIN$", "CONOUT$", strings.Repeat("a", 256),
+	} {
+		t.Run(fmt.Sprintf("case_%d", i), func(t *testing.T) {
+			base := t.TempDir()
+			if _, err := NewFileSystem().CreateFolder(name, base); err == nil {
+				t.Fatalf("invalid component accepted: %q", name)
+			}
+			entries, err := os.ReadDir(base)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("invalid component created a folder: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestCreateFolderRejectsSymlinkDestination(t *testing.T) {
+	base, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(base, "atestado")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := NewFileSystem().CreateFolder("atestado", base); err == nil {
+		t.Fatal("symlink destination accepted")
 	}
 }
 func TestMovePDFErrors(t *testing.T) {

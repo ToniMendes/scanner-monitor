@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"scanner-monitor/internal/domain"
 	"sync"
 	"time"
@@ -173,23 +174,40 @@ func (m *Monitor) process(ctx context.Context, file *os.File, base string) error
 			return errors.New("classificação não informada")
 		}
 		if err == nil {
-			model, err = domain.NewParametersPDF(model.ClassificationName)
+			model, err = model.Normalize()
 		}
 		return err
 	}); err != nil {
 		return err
 	}
-	fmt.Printf("[PDF %q] Classificação recebida: %s.\n", name, model.ClassificationName)
+	components, err := model.FolderComponents()
+	if err != nil {
+		return fmt.Errorf("erro ao definir destino de %q: %w", name, err)
+	}
+	if len(components) == 0 {
+		return fmt.Errorf("destino não informado para %q", name)
+	}
+	plannedPath := filepath.Join(append([]string{base}, components...)...)
+	fmt.Printf("[PDF %q] Categoria: %s. Identificação: %s. Destino: %q.\n", name, model.ClassificationName, model.IdentificationStatus, plannedPath)
 	var dir string
-	if err := m.retry(ctx, "criação de pasta para "+name, func(context.Context) error {
-		fmt.Printf("[PDF %q] Preparando pasta da categoria %q em %q.\n", name, model.ClassificationName, base)
-		var err error
-		dir, err = m.fs.CreateFolder(model.ClassificationName, base)
-		return err
+	if err := m.retry(ctx, "criação de pasta para "+name, func(attempt context.Context) error {
+		fmt.Printf("[PDF %q] Preparando destino %q.\n", name, plannedPath)
+		dir = base
+		for _, component := range components {
+			if err := attempt.Err(); err != nil {
+				return err
+			}
+			var err error
+			dir, err = m.fs.CreateFolder(component, dir)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
-	err := m.retry(ctx, "movimentação de "+name, func(attempt context.Context) error {
+	err = m.retry(ctx, "movimentação de "+name, func(attempt context.Context) error {
 		fmt.Printf("[PDF %q] Movendo para %q.\n", name, dir)
 		if fs, ok := m.fs.(interface {
 			MovePDFContext(context.Context, string, string) error

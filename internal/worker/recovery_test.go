@@ -58,7 +58,7 @@ func TestProcessRetriesEachStage(t *testing.T) {
 	if err := monitor.process(context.Background(), file, "output"); err != nil {
 		t.Fatal(err)
 	}
-	if ai.calls.Load() != 3 || fs.folders.Load() != 2 || fs.moveAttempts.Load() != 3 {
+	if ai.calls.Load() != 3 || fs.folders.Load() != 3 || fs.moveAttempts.Load() != 3 {
 		t.Fatalf("AI=%d folders=%d moves=%d", ai.calls.Load(), fs.folders.Load(), fs.moveAttempts.Load())
 	}
 	if fs.folder != "output" {

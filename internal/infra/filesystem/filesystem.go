@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type FileSystem struct {
@@ -149,36 +150,69 @@ func (f *FileSystem) GetPdf(
 }
 
 func (f *FileSystem) CreateFolder(classificationName, dirBase string) (string, error) {
-	if strings.TrimSpace(dirBase) == "" || classificationName == "" || classificationName == "." || classificationName == ".." || strings.ContainsAny(classificationName, "/\\:") {
+	if strings.TrimSpace(dirBase) == "" || !validFolderComponent(classificationName) {
 		return "", fmt.Errorf("pasta base ou categoria inválida")
 	}
-	fmt.Println("Criando Pasta.")
-	// Caminho da pasta
-
-	dirPath := filepath.Join(
-		dirBase,
-		classificationName,
-	)
-
-	// 0755 define as permissões (no Windows, o SO aplica a ACL padrão do usuário)
-	err := os.MkdirAll(dirPath, 0755)
+	dirPath := filepath.Join(dirBase, classificationName)
+	absBase, err := filepath.Abs(dirBase)
 	if err != nil {
-		if os.IsExist(err) {
-			info, statErr := os.Stat(dirPath)
-			if statErr != nil {
-				return "", statErr
-			}
-			if !info.IsDir() {
-				return "", fmt.Errorf("destino não é um diretório: %q", dirPath)
-			}
-			fmt.Println("Pasta já existe.")
-			return dirPath, nil
-		}
-		return "", fmt.Errorf("erro ao criar pasta %q: %w", dirPath, err)
+		return "", fmt.Errorf("erro ao resolver pasta base: %w", err)
+	}
+	absPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		return "", fmt.Errorf("erro ao resolver pasta de destino: %w", err)
+	}
+	relativePath, err := filepath.Rel(absBase, absPath)
+	if err != nil || relativePath != classificationName {
+		return "", fmt.Errorf("pasta de destino fora da pasta base")
 	}
 
-	fmt.Println("Pasta criada com sucesso!")
+	// 0755 define as permissões (no Windows, o SO aplica a ACL padrão do usuário)
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return "", fmt.Errorf("erro ao criar pasta %q: %w", dirPath, err)
+	}
+	info, err := os.Lstat(dirPath)
+	if err != nil {
+		return "", fmt.Errorf("erro ao verificar pasta %q: %w", dirPath, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("destino não é um diretório regular: %q", dirPath)
+	}
+	fmt.Printf("Pasta de destino preparada: %q.\n", dirPath)
 	return dirPath, nil
+}
+
+// validFolderComponent mantém o destino em um único nível e compatível com Windows.
+func validFolderComponent(name string) bool {
+	if strings.TrimSpace(name) == "" || name == "." || name == ".." || strings.ContainsAny(name, `<>:"/\|?*`) || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+		return false
+	}
+	units := 0
+	for _, char := range name {
+		if unicode.IsControl(char) {
+			return false
+		}
+		units++
+		if char > 0xffff {
+			units++
+		}
+	}
+	if units > 255 {
+		return false
+	}
+	stem, _, _ := strings.Cut(name, ".")
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$":
+		return false
+	}
+	if strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT") {
+		suffix := stem[3:]
+		if len([]rune(suffix)) == 1 && strings.ContainsAny(suffix, "123456789¹²³") {
+			return false
+		}
+	}
+	return true
 }
 
 func (f *FileSystem) MovePDF(
