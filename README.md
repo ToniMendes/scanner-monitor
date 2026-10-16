@@ -6,6 +6,8 @@ O objetivo é reduzir o trabalho manual depois de usar o scanner de uma impresso
 
 > **Status:** projeto em desenvolvimento. Os diretórios são configurados pelo `.env`, e 20 workers processam os PDFs continuamente. Consulte as [limitações atuais](#limitações-atuais) antes de usar.
 
+> **Execução recomendada no Windows:** para executar o sistema, você precisa apenas dos arquivos `main.exe` e `.env`, sem instalar Go ou baixar o código-fonte. Mantenha os dois na **mesma pasta**, de preferência uma pasta chamada `script`, separada das pastas de entrada e destino dos PDFs. Configure o `.env` para o seu computador e inicie o executável de dentro dessa pasta, conforme as [instruções de execução](#execução).
+
 ## Sumário
 
 - [Atualizações recentes](#atualizações-recentes)
@@ -146,6 +148,8 @@ Os caminhos do arquivo de exemplo são de Windows. Adapte-os ao seu computador a
 
 ### 1. Clonar e baixar dependências
 
+Esta etapa é necessária apenas para executar pelo código ou compilar. Para usar o `main.exe` já disponível, siga a [execução recomendada](#execução).
+
 Substitua a URL abaixo pela URL do seu repositório:
 
 ```powershell
@@ -156,7 +160,9 @@ go mod download
 
 ### 2. Criar o arquivo `.env`
 
-Na raiz do projeto, copie o arquivo de exemplo. O nome existente no repositório é `.env.exemple`:
+Para usar o executável, coloque o `.env` na mesma pasta do `main.exe`. Você pode criar esse arquivo a partir do [modelo `.env.exemple`](.env.exemple).
+
+Para executar pelo código, copie o arquivo de exemplo na raiz do projeto. O nome existente no repositório é `.env.exemple`:
 
 ```powershell
 Copy-Item .env.exemple .env
@@ -180,11 +186,13 @@ Substitua o identificador do modelo por um disponível na sua conta e ajuste os 
 
 A CLI não usa mais `CHATGPT_SDK_KEY` para obter a chave. Se você utiliza um `.env` antigo, remova essa variável e informe a chave pelo terminal quando a aplicação solicitar.
 
-O arquivo `.env` deve existir no **diretório de trabalho da execução**. Na configuração atual, a leitura desse arquivo é obrigatória, mesmo quando há variáveis de ambiente no sistema.
+O arquivo `.env` deve existir no **diretório de trabalho da execução**. Ao usar o `main.exe`, mantenha o `.env` junto dele e abra o terminal nessa pasta antes de iniciar. Na configuração atual, a leitura desse arquivo é obrigatória, mesmo quando há variáveis de ambiente no sistema.
 
 ### 3. Ajustar os diretórios
 
 Configure `FILE_PATH_BASE` e `DIR_PATH_BASE` no `.env`. Prefira caminhos absolutos. O monitor normaliza a barra final da entrada antes de procurar PDFs.
+
+Mantenha o executável e o `.env` em uma pasta própria, como `C:\Scanner\script`, separada tanto da entrada quanto do destino dos PDFs. Confira se os caminhos configurados apontam para as pastas corretas antes de iniciar.
 
 Crie a pasta de entrada antes de iniciar (a saída será criada automaticamente):
 
@@ -226,21 +234,48 @@ O terminal mostra o arquivo em processamento, leitura do PDF, upload, espera pel
 
 ## Execução
 
-Com o `.env` preenchido, execute a partir da raiz do projeto. Para usar o executável Windows disponível no repositório:
+### Usar o `main.exe` (recomendado no Windows)
 
-```powershell
-.\exe\main.exe
+Para executar o sistema, bastam **`main.exe` e `.env`**. Não é necessário instalar Go nem baixar o restante do projeto.
+
+1. Crie uma pasta chamada `script`, por exemplo `C:\Scanner\script`.
+2. Coloque o [executável `main.exe`](exe/main.exe) e o arquivo `.env` **juntos nessa pasta**.
+3. Configure `MODEL_OPENAI`, `FILE_PATH_BASE` (entrada dos PDFs) e `DIR_PATH_BASE` (destino dos PDFs) no `.env`, conforme a [configuração](#2-criar-o-arquivo-env). Use caminhos absolutos e confira se correspondem ao seu computador.
+4. Mantenha a pasta `script` separada das pastas de entrada e destino dos PDFs.
+
+Exemplo de organização:
+
+```text
+C:\Scanner\
+├── script\
+│   ├── main.exe
+│   └── .env
+├── entrada\
+└── organizados\
 ```
 
-O `.env` é procurado no diretório de trabalho do terminal, mesmo quando o executável está na subpasta `exe`. Se mover o executável, mantenha o `.env` no diretório a partir do qual iniciar o programa.
+Nesse exemplo, configure `FILE_PATH_BASE=C:\Scanner\entrada` e `DIR_PATH_BASE=C:\Scanner\organizados` no `.env`. Crie a pasta de entrada antes de iniciar; a saída será criada automaticamente.
 
-Para executar diretamente pelo código:
+Abra o PowerShell e execute **de dentro da pasta `script`**:
+
+```powershell
+Set-Location 'C:\Scanner\script'
+.\main.exe
+```
+
+O programa procura o `.env` na pasta atual do terminal. Por isso, além de manter os dois arquivos juntos, entre nessa pasta antes de iniciar o executável. Se mover o `main.exe`, leve o `.env` junto e ajuste os caminhos quando necessário.
+
+Quando solicitado, informe a chave da OpenAI conforme a seção de configuração. Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer no destino correspondente ao aluno, formulário em branco ou documento sem identificação.
+
+Ao alterar o `.env`, reinicie o executável. Use `Ctrl+C` para solicitar o encerramento do processo. O programa funciona pelo terminal e não oferece interface gráfica ou servidor HTTP.
+
+### Executar pelo código ou compilar (alternativa)
+
+Com Go instalado e o `.env` preenchido na raiz do projeto, execute diretamente pelo código:
 
 ```powershell
 go run ./cmd/cli
 ```
-
-Quando solicitado, informe a chave da OpenAI conforme a seção de configuração. Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer no destino correspondente ao aluno, formulário em branco ou documento sem identificação.
 
 Também é possível compilar e executar no Windows:
 
@@ -248,8 +283,6 @@ Também é possível compilar e executar no Windows:
 go build -o scanner-monitor.exe ./cmd/cli
 .\scanner-monitor.exe
 ```
-
-Ao alterar o `.env`, reinicie o executável. Use `Ctrl+C` para solicitar o encerramento do processo. O programa funciona pelo terminal e não oferece interface gráfica ou servidor HTTP.
 
 ### Dados enviados à API
 
@@ -330,7 +363,7 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 
 | Sintoma | O que verificar |
 | --- | --- |
-| Erro ao ler `.env` | Execute na raiz do projeto e confirme que o arquivo foi criado |
+| Erro ao ler `.env` | Ao usar o executável, confirme que o `.env` está junto do `main.exe` e inicie pelo terminal nessa pasta (por exemplo, `script`); pelo código, execute na raiz do projeto |
 | Modelo não informado | Preencha `MODEL_OPENAI` no `.env` |
 | Solicitação da chave da OpenAI | Informe a chave no terminal; ela será salva no gerenciador de credenciais do sistema |
 | Erro ao ler ou salvar a chave | Use um terminal interativo e confira o acesso ao gerenciador de credenciais do usuário |
