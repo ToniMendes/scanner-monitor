@@ -2,7 +2,7 @@
 
 Organizador de documentos digitalizados, desenvolvido em **Go**, que monitora uma pasta de entrada, analisa PDFs com a **API da OpenAI** e organiza os arquivos por aluno e tipo de documento.
 
-O objetivo é reduzir o trabalho manual depois de usar o scanner de uma impressora: em vez de procurar arquivos avulsos e separar cada documento, o programa organiza os PDFs conforme seu conteúdo.
+O sistema foi desenvolvido com foco em **secretarias escolares que ainda utilizam muitos documentos físicos em papel**. O objetivo é reduzir o trabalho manual depois de usar o scanner de uma impressora: em vez de procurar arquivos avulsos e separar cada documento, o programa organiza os PDFs conforme seu conteúdo.
 
 > **Status:** projeto em desenvolvimento. Os diretórios são configurados pelo `.env`, e 20 workers processam os PDFs continuamente. Consulte as [limitações atuais](#limitações-atuais) antes de usar.
 
@@ -171,7 +171,7 @@ Copy-Item .env.exemple .env
 Preencha as três variáveis, conforme o [arquivo de exemplo](.env.exemple):
 
 ```dotenv
-MODEL_OPENAI=id_do_modelo_compativel
+MODEL_OPENAI=gpt-6-luna
 FILE_PATH_BASE=C:\Scanner\entrada
 DIR_PATH_BASE=C:\Scanner\organizados
 ```
@@ -182,7 +182,9 @@ DIR_PATH_BASE=C:\Scanner\organizados
 | `FILE_PATH_BASE` | Pasta de entrada dos PDFs | Sim |
 | `DIR_PATH_BASE` | Pasta base de saída da organização por aluno e tipo | Sim |
 
-Substitua o identificador do modelo por um disponível na sua conta e ajuste os caminhos. O programa rejeita valores vazios nessas três configurações. Variáveis de ambiente do sistema podem sobrescrever os valores do arquivo.
+O exemplo usa o [GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini), que aceita entrada visual e saída estruturada. A sintaxe é `NOME_DA_VARIAVEL=valor`, com uma variável por linha e apenas o identificador da API em `MODEL_OPENAI`.
+
+Se escolher outro modelo, confirme a compatibilidade com PDFs e JSON Schema e a disponibilidade na sua conta. Ajuste os caminhos ao seu computador. O programa rejeita valores vazios nessas três configurações. Variáveis de ambiente do sistema podem sobrescrever os valores do arquivo.
 
 A CLI não usa mais `CHATGPT_SDK_KEY` para obter a chave. Se você utiliza um `.env` antigo, remova essa variável e informe a chave pelo terminal quando a aplicação solicitar.
 
@@ -203,6 +205,8 @@ New-Item -ItemType Directory -Force -Path 'C:\Scanner\entrada'
 Configure o software do scanner para salvar seus PDFs em `C:\Scanner\entrada`. Use uma pasta de saída separada. A movimentação grava um temporário `.scanner-*.partial`, sincroniza o conteúdo e publica o PDF completo por hard link sem sobrescrever o destino. A origem só é removida após a publicação. Entrada e saída podem estar em volumes distintos; o volume de saída precisa suportar hard links, como NTFS. Se não suportar, a movimentação retorna erro e preserva a origem.
 
 ### 4. Informar e armazenar a chave da OpenAI
+
+A chave de API é **pessoal** e deve ser fornecida pelo próprio usuário.
 
 Após carregar o `.env`, a aplicação procura a chave no gerenciador de credenciais do sistema. Se não conseguir recuperá-la, exibe:
 
@@ -286,7 +290,7 @@ go build -o scanner-monitor.exe ./cmd/cli
 
 ### Dados enviados à API
 
-O conteúdo completo dos PDFs é enviado à OpenAI para classificação. As chamadas podem gerar custos de upload, processamento ou uso do modelo conforme as condições do serviço. Considere o conteúdo dos documentos antes de processá-los, especialmente atestados e dados de alunos.
+O conteúdo completo dos PDFs é enviado à OpenAI para classificação. **Todos os custos de uso da API são de responsabilidade exclusiva do usuário**, conforme o modelo escolhido e as condições do serviço. Considere o conteúdo dos documentos antes de processá-los, especialmente atestados e dados de alunos.
 
 A aplicação não implementa exclusão dos arquivos enviados à API depois da análise. Confira as regras de armazenamento do serviço e as necessidades de privacidade do seu uso.
 
