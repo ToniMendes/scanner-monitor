@@ -182,7 +182,7 @@ DIR_PATH_BASE=C:\Scanner\organizados
 | `FILE_PATH_BASE` | Pasta de entrada dos PDFs | Sim |
 | `DIR_PATH_BASE` | Pasta base de saída da organização por aluno e tipo | Sim |
 
-O exemplo usa o [GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini), que aceita entrada visual e saída estruturada. A sintaxe é `NOME_DA_VARIAVEL=valor`, com uma variável por linha e apenas o identificador da API em `MODEL_OPENAI`.
+O exemplo usa o [GPT-6-luna](https://developers.openai.com/api/docs/models/gpt-5.4-mini), que aceita entrada visual e saída estruturada. A sintaxe é `NOME_DA_VARIAVEL=valor`, com uma variável por linha e apenas o identificador da API em `MODEL_OPENAI`.
 
 Se escolher outro modelo, confirme a compatibilidade com PDFs e JSON Schema e a disponibilidade na sua conta. Ajuste os caminhos ao seu computador. O programa rejeita valores vazios nessas três configurações. Variáveis de ambiente do sistema podem sobrescrever os valores do arquivo.
 
