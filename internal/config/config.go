@@ -9,7 +9,6 @@ import (
 )
 
 type Config struct {
-	OpenaiSDKKey string `mapstructure:"CHATGPT_SDK_KEY"`
 	ModelOpenAI  string `mapstructure:"MODEL_OPENAI"`
 	FilePathBase string `mapstructure:"FILE_PATH_BASE"`
 	DirPathBase  string `mapstructure:"DIR_PATH_BASE"`
@@ -43,7 +42,7 @@ func StartViper() error {
 		return fmt.Errorf("erro ao decodificar as configurações para a struct: %w", err)
 	}
 	for _, item := range []struct{ key, value string }{
-		{"CHATGPT_SDK_KEY", cfg.OpenaiSDKKey}, {"MODEL_OPENAI", cfg.ModelOpenAI},
+		{"MODEL_OPENAI", cfg.ModelOpenAI},
 		{"FILE_PATH_BASE", cfg.FilePathBase}, {"DIR_PATH_BASE", cfg.DirPathBase},
 	} {
 		if strings.TrimSpace(item.value) == "" {

@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"scanner-monitor/internal/config"
-	"scanner-monitor/internal/infra/ai"
+	"scanner-monitor/internal/credential"
 	"scanner-monitor/internal/infra/filesystem"
 	"scanner-monitor/internal/worker"
 	"syscall"
@@ -32,9 +32,10 @@ func run() error {
 		return fmt.Errorf("não foi possível iniciar: %w", err)
 	}
 
-	aiRepo, errAi := ai.NewOpenAI(config.Env.ModelOpenAI, config.Env.OpenaiSDKKey)
-	if errAi != nil {
-		return fmt.Errorf("não foi possível iniciar a IA: %w", errAi)
+	cr := credential.NewCredential()
+	aiRepo, errGetCredential := cr.GetCredential()
+	if errGetCredential != nil {
+		return errGetCredential
 	}
 
 	fsRepo := filesystem.NewFileSystem()
