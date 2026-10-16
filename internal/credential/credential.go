@@ -3,7 +3,6 @@ package credential
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -27,20 +26,41 @@ var ErrAPIKeyNotFound = errors.New("API Key não encontrada")
 func (c *Credential) GetCredential() (string, error) {
 	apiKey, err := loadAPIKey()
 
-	if err != nil {
+	if errors.Is(err, ErrAPIKeyNotFound) {
 		apiKey, err = askAPIKey()
 		if err != nil {
 			return "", err
 		}
 
-		err = saveAPIKey(apiKey)
-		if err != nil {
-			log.Fatal(err)
+		if err := saveAPIKey(apiKey); err != nil {
+			return "", err
 		}
+
+		return apiKey, nil
 	}
 
+	if err != nil {
+		return "", err
+	}
 
 	return apiKey, nil
+}
+
+func (c *Credential) ChangeCredential() (string, error) {
+	fmt.Println("Informe a nova OpenAI API Key:")
+
+	newAPIKey, err := askAPIKey()
+	if err != nil {
+		return "", err
+	}
+
+	if err := saveAPIKey(newAPIKey); err != nil {
+		return "", err
+	}
+
+	fmt.Println("API Key atualizada com sucesso.")
+
+	return newAPIKey, nil
 }
 
 func askAPIKey() (string, error) {
@@ -67,8 +87,7 @@ func saveAPIKey(apiKey string) error {
 		return errors.New("API Key não pode estar vazia")
 	}
 
-	err := keyring.Set(service, user, apiKey)
-	if err != nil {
+	if err := keyring.Set(service, user, apiKey); err != nil {
 		return fmt.Errorf("erro ao salvar API Key: %w", err)
 	}
 
