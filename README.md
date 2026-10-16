@@ -238,7 +238,7 @@ O terminal mostra o arquivo em processamento, leitura do PDF, upload, espera pel
 
 Para executar o sistema, bastam **`main.exe` e `.env`**. Não é necessário instalar Go nem baixar o restante do projeto.
 
-1. Crie uma pasta chamada `script`, por exemplo `C:\Scanner\script`.
+1. Crie uma pasta chamada `script`, por exemplo `C:\script`.
 2. Coloque o [executável `main.exe`](exe/main.exe) e o arquivo `.env` **juntos nessa pasta**.
 3. Configure `MODEL_OPENAI`, `FILE_PATH_BASE` (entrada dos PDFs) e `DIR_PATH_BASE` (destino dos PDFs) no `.env`, conforme a [configuração](#2-criar-o-arquivo-env). Use caminhos absolutos e confira se correspondem ao seu computador.
 4. Mantenha a pasta `script` separada das pastas de entrada e destino dos PDFs.
