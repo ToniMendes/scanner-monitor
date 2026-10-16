@@ -8,6 +8,7 @@ O objetivo é reduzir o trabalho manual depois de usar o scanner de uma impresso
 
 ## Sumário
 
+- [Atualizações recentes](#atualizações-recentes)
 - [Como funciona](#como-funciona)
 - [Categorias de documentos](#categorias-de-documentos)
 - [Tecnologias](#tecnologias)
@@ -20,6 +21,13 @@ O objetivo é reduzir o trabalho manual depois de usar o scanner de uma impresso
 - [Solução de problemas](#solução-de-problemas)
 - [Cuidados antes de publicar no GitHub](#cuidados-antes-de-publicar-no-github)
 - [Próximas melhorias](#próximas-melhorias)
+
+## Atualizações recentes
+
+- **Chave solicitada no terminal:** na primeira execução, a aplicação pede a chave da OpenAI sem exibir os caracteres digitados e a salva no gerenciador de credenciais do sistema para reutilizar nas próximas execuções.
+- **Configuração simplificada:** o `.env.exemple` contém somente `MODEL_OPENAI`, `FILE_PATH_BASE` e `DIR_PATH_BASE`. A chave deixou de ser configurada pelo `.env`.
+- **Testes de configuração atualizados:** validam modelo e diretórios com arquivos `.env` temporários, sem buscar a chave da API nesse arquivo.
+- **Executável disponível:** a versão Windows está em [`exe/main.exe`](exe/main.exe), com instruções de execução abaixo.
 
 ## Como funciona
 
@@ -66,7 +74,7 @@ A IA extrai `classification_name`, `is_blank_form`, `holder_role`, `identificati
 
 As instruções em `internal/infra/ai/prompt.go` orientam a IA a distinguir o titular dos pais, responsáveis, médicos e signatários. Na certidão, o titular é a pessoa registrada; no atestado, é o paciente. Um PDF com documentos do aluno e do responsável só pode usar os dados do aluno quando a relação estiver explícita. CPF e prontuário precisam pertencer à mesma pessoa do nome; a IA não deve completar nomes ou adivinhar manuscritos ilegíveis.
 
-O programa monta as pastas após validar a resposta; a IA não fornece caminhos. A evidência retornada precisa conter o nome completo selecionado. CPF e prontuário divergentes ou sem comprovação nessa evidência são descartados, preservando o nome seguro. O nome é convertido para letras minúsculas, sem acentos, espaços ou pontuação. A identificação segue esta ordem:
+O programa monta as pastas após validar a resposta; a IA não fornece caminhos. A evidência retornada precisa conter o nome completo selecionado. CPF e prontuário precisam aparecer integralmente sob um rótulo correspondente ao titular; valores parciais, divergentes, associados ao responsável ou sem comprovação são descartados, preservando o nome seguro. O nome é convertido para letras minúsculas, sem acentos, espaços ou pontuação. A identificação segue esta ordem:
 
 1. `nomecompletodoaluno_CPF`, com CPF sem pontuação e dígitos verificadores válidos.
 2. `nomecompletodoaluno_prontuario_NUMERO`, quando não há CPF válido e há número de prontuário utilizável.
@@ -118,12 +126,15 @@ O upload e a análise usam entrada de PDF com detalhe visual `high` e saída est
 | `github.com/openai/openai-go/v3` | Upload dos PDFs e análise pela Responses API |
 | `github.com/spf13/viper` | Leitura do arquivo `.env` |
 | `github.com/invopop/jsonschema` | Geração do schema da classificação |
+| `github.com/zalando/go-keyring` | Armazenamento e leitura da chave no gerenciador de credenciais do sistema |
+| `golang.org/x/term` | Leitura da chave no terminal sem exibir os caracteres |
 
 ## Pré-requisitos
 
-- Go **1.26.6**, versão declarada no `go.mod`, ou uma versão posterior compatível.
-- Git para clonar o repositório.
+- Go **1.26.6**, versão declarada no `go.mod`, ou uma versão posterior compatível, para executar pelo código ou compilar. O executável Windows já compilado dispensa a instalação do Go.
+- Git para clonar o repositório, caso escolha essa forma de obter os arquivos.
 - Chave de API da OpenAI com acesso ao modelo escolhido e crédito ou faturamento disponível.
+- Terminal interativo para informar a chave e acesso ao gerenciador de credenciais do sistema; no Windows, é utilizado o Gerenciador de Credenciais.
 - Modelo compatível com entrada de PDF e saída estruturada em JSON Schema.
 - Acesso à internet para baixar dependências e realizar chamadas à API.
 - Permissões de leitura na pasta de entrada e de escrita na pasta de saída.
@@ -151,10 +162,9 @@ Na raiz do projeto, copie o arquivo de exemplo. O nome existente no repositório
 Copy-Item .env.exemple .env
 ```
 
-Preencha as quatro variáveis:
+Preencha as três variáveis, conforme o [arquivo de exemplo](.env.exemple):
 
 ```dotenv
-CHATGPT_SDK_KEY=sua_chave_de_api
 MODEL_OPENAI=id_do_modelo_compativel
 FILE_PATH_BASE=C:\Scanner\entrada
 DIR_PATH_BASE=C:\Scanner\organizados
@@ -162,12 +172,13 @@ DIR_PATH_BASE=C:\Scanner\organizados
 
 | Variável | Descrição | Obrigatória |
 | --- | --- | --- |
-| `CHATGPT_SDK_KEY` | Chave de API utilizada para enviar e analisar os PDFs | Sim |
 | `MODEL_OPENAI` | Identificador do modelo usado na classificação | Sim |
 | `FILE_PATH_BASE` | Pasta de entrada dos PDFs | Sim |
 | `DIR_PATH_BASE` | Pasta base de saída da organização por aluno e tipo | Sim |
 
-Os valores acima são placeholders: substitua-os por credenciais e um modelo disponíveis na sua conta. O programa rejeita valores vazios.
+Substitua o identificador do modelo por um disponível na sua conta e ajuste os caminhos. O programa rejeita valores vazios nessas três configurações. Variáveis de ambiente do sistema podem sobrescrever os valores do arquivo.
+
+A CLI não usa mais `CHATGPT_SDK_KEY` para obter a chave. Se você utiliza um `.env` antigo, remova essa variável e informe a chave pelo terminal quando a aplicação solicitar.
 
 O arquivo `.env` deve existir no **diretório de trabalho da execução**. Na configuração atual, a leitura desse arquivo é obrigatória, mesmo quando há variáveis de ambiente no sistema.
 
@@ -182,6 +193,20 @@ New-Item -ItemType Directory -Force -Path 'C:\Scanner\entrada'
 ```
 
 Configure o software do scanner para salvar seus PDFs em `C:\Scanner\entrada`. Use uma pasta de saída separada. A movimentação grava um temporário `.scanner-*.partial`, sincroniza o conteúdo e publica o PDF completo por hard link sem sobrescrever o destino. A origem só é removida após a publicação. Entrada e saída podem estar em volumes distintos; o volume de saída precisa suportar hard links, como NTFS. Se não suportar, a movimentação retorna erro e preserva a origem.
+
+### 4. Informar e armazenar a chave da OpenAI
+
+Após carregar o `.env`, a aplicação procura a chave no gerenciador de credenciais do sistema. Se não conseguir recuperá-la, exibe:
+
+```text
+Digite sua OpenAI API Key:
+```
+
+Digite ou cole sua chave e pressione Enter. Os caracteres não aparecem no terminal. Uma chave vazia é rejeitada; a chave informada é salva pelo `go-keyring` com serviço `ScannerMonitor` e usuário `OpenAI`. No Windows, a entrada é a credencial genérica `ScannerMonitor:OpenAI`.
+
+Nas próximas execuções, a chave salva é reutilizada. Se o armazenamento falhar, a aplicação encerra com erro. A chave só é validada pela API quando uma requisição é realizada.
+
+Para trocar a chave no Windows, encerre o monitor, abra **Gerenciador de Credenciais → Credenciais do Windows** e remova somente a entrada `ScannerMonitor:OpenAI`. Ao iniciar novamente, a aplicação solicitará a nova chave. Ainda não há comando próprio para essa troca.
 
 ### Arquivos repetidos
 
@@ -201,13 +226,21 @@ O terminal mostra o arquivo em processamento, leitura do PDF, upload, espera pel
 
 ## Execução
 
-Execute a partir da raiz do projeto, onde está o `.env`:
+Com o `.env` preenchido, execute a partir da raiz do projeto. Para usar o executável Windows disponível no repositório:
+
+```powershell
+.\exe\main.exe
+```
+
+O `.env` é procurado no diretório de trabalho do terminal, mesmo quando o executável está na subpasta `exe`. Se mover o executável, mantenha o `.env` no diretório a partir do qual iniciar o programa.
+
+Para executar diretamente pelo código:
 
 ```powershell
 go run ./cmd/cli
 ```
 
-Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer no destino correspondente ao aluno, formulário em branco ou documento sem identificação.
+Quando solicitado, informe a chave da OpenAI conforme a seção de configuração. Depois, digitalize um documento ou coloque um PDF completo na pasta de entrada. Após a análise, o arquivo deve aparecer no destino correspondente ao aluno, formulário em branco ou documento sem identificação.
 
 Também é possível compilar e executar no Windows:
 
@@ -234,6 +267,8 @@ scanner-monitor/
 ├── internal/
 │   ├── config/
 │   │   └── config.go                # Carregamento do .env com Viper
+│   ├── credential/
+│   │   └── credential.go            # Solicitação e armazenamento da chave
 │   ├── domain/
 │   │   ├── model.go                 # Identificação, validação e destinos
 │   │   └── repository.go            # Contratos de IA e sistema de arquivos
@@ -245,6 +280,8 @@ scanner-monitor/
 │   │       └── filesystem.go         # Busca, criação de pastas e movimentação
 │   └── worker/
 │       └── monitor.go               # Coordenação dos workers
+├── exe/
+│   └── main.exe                     # Executável Windows disponível
 ├── .env.exemple                     # Modelo de configuração sem credenciais
 ├── .gitignore
 ├── go.mod
@@ -252,9 +289,13 @@ scanner-monitor/
 └── README.md
 ```
 
-O domínio define os contratos consumidos pelo monitor, enquanto as implementações de infraestrutura realizam chamadas à API e operações em disco. A interface de IA `OpenAIRepository`.
-~~~~
+O domínio define os contratos consumidos pelo monitor, enquanto as implementações de infraestrutura realizam chamadas à API e operações em disco. A interface `OpenAIRepository` define a análise dos PDFs; `FileSystemRepository` define a busca, a criação de pastas e a movimentação. O pacote `credential` recupera ou solicita a chave e inicializa o cliente de IA.
+
+Os arquivos `*_test.go`, distribuídos pelos pacotes, foram omitidos da árvore para facilitar a leitura.
+
 ## Verificação
+
+Os testes de configuração criam arquivos `.env` temporários somente com `MODEL_OPENAI`, `FILE_PATH_BASE` e `DIR_PATH_BASE`, sem depender de uma chave da API. O pacote `credential` ainda não possui testes automatizados.
 
 Para executar os testes automatizados e gerar cobertura:
 
@@ -263,7 +304,7 @@ go test ./... '-coverprofile=coverage.out'
 go tool cover '-func=coverage.out'
 ```
 
-Os testes usam diretórios temporários, repositórios simulados e um servidor HTTP local. Cobrem configuração e sobrescrita por variáveis de ambiente; validação da identificação e escolha dos destinos; formulários em branco e documentos sem identificação; CPF inválido; classificação vazia; credenciais ausentes; falhas de upload e análise; JSON inválido; cancelamento; criação de pastas; colisões de nomes; movimentação concorrente; preservação da origem em erros; filtragem de PDFs; substituição de arquivos; processamento contínuo e encerramento dos workers. Não usam credenciais reais nem chamam a OpenAI. Respostas simuladas verificam as regras do programa, mas não garantem a leitura real de documentos antigos ou manuscritos.
+Os testes existentes usam diretórios temporários, repositórios simulados e um servidor HTTP local. Incluem configuração e sobrescrita por variáveis de ambiente; validação da identificação e escolha dos destinos; formulários em branco e documentos sem identificação; CPF inválido; classificação vazia; credenciais ausentes no cliente de IA; falhas de upload e análise; JSON inválido; cancelamento; criação de pastas; colisões de nomes; movimentação concorrente; preservação da origem em erros; filtragem de PDFs; substituição de arquivos; processamento contínuo e encerramento dos workers. Não usam credenciais reais nem chamam a OpenAI. Respostas simuladas verificam as regras do programa, mas não garantem a leitura real de documentos antigos ou manuscritos.
 
 Também é possível verificar condições de corrida com `go test -race ./...`, quando houver suporte do compilador C e da plataforma. Os testes não simulam todas as falhas possíveis do sistema operacional, como disco cheio ou interrupção de energia, e não validam a qualidade da classificação real.
 
@@ -271,6 +312,9 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 
 ## Limitações atuais
 
+- **Credenciais:** a primeira configuração depende de um terminal interativo e do gerenciador de credenciais do sistema. Não há opção própria na CLI para trocar ou excluir a chave salva.
+- **PDFs protegidos ou com erro de leitura:** o prompt menciona uma pasta `bloqueado`, mas esse destino ainda não está implementado no schema nem no domínio. Falhas na análise seguem as tentativas normais; não há encaminhamento automático para essa pasta.
+- **Certidão de casamento:** aparece nas instruções da IA, mas `certidao_casamento` ainda não é uma categoria aceita pelo schema e pelo domínio.
 - **Novas tentativas em memória:** há três tentativas por etapa, sem fila persistente. Falhas definitivas precisam de intervenção ou reinício para reprocessar o mesmo arquivo.
 - **Colisões de pastas:** diretórios são criados automaticamente, mas um arquivo existente no lugar de uma pasta não é substituído; a falha é registrada.
 - **PDF em gravação:** estabilidade e marcadores são heurísticas, sem validação completa da estrutura do PDF. Arquivos vazios, incompletos ou sem os marcadores ficam aguardando na entrada.
@@ -287,7 +331,10 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 | Sintoma | O que verificar |
 | --- | --- |
 | Erro ao ler `.env` | Execute na raiz do projeto e confirme que o arquivo foi criado |
-| Chave ou modelo não informado | Preencha `CHATGPT_SDK_KEY` e `MODEL_OPENAI` no `.env` |
+| Modelo não informado | Preencha `MODEL_OPENAI` no `.env` |
+| Solicitação da chave da OpenAI | Informe a chave no terminal; ela será salva no gerenciador de credenciais do sistema |
+| Erro ao ler ou salvar a chave | Use um terminal interativo e confira o acesso ao gerenciador de credenciais do usuário |
+| Chave salva inválida ou revogada | Remova a entrada `ScannerMonitor:OpenAI` no Gerenciador de Credenciais do Windows e reinicie para informar outra chave |
 | Nenhum PDF é processado | Confira `FILE_PATH_BASE` e coloque os PDFs na raiz da pasta |
 | Erro ao enviar ou analisar o PDF | Confira conexão, credenciais, acesso ao modelo, limites da API e integridade do arquivo |
 | Documento em `sem identificação` | Verifique legibilidade, nome completo do titular, vínculo dos dados e se há apenas um aluno identificável no PDF |
@@ -296,12 +343,12 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 
 ## Cuidados antes de publicar no GitHub
 
-- Mantenha a chave apenas no `.env`, que já está listado no `.gitignore`.
+- Informe a chave pelo terminal e mantenha seu armazenamento no gerenciador de credenciais do sistema. O `.env` continua listado no `.gitignore` para preservar a configuração local.
 - Não inclua PDFs reais, dados pessoais ou credenciais no repositório.
-- O `main.exe` consta como arquivo rastreado pelo Git nesta versão. Uma entrada no `.gitignore` não remove arquivos já rastreados. Se quiser publicar apenas o código, remova o executável do índice, preservando sua cópia local:
+- O `exe/main.exe` consta como arquivo rastreado pelo Git nesta versão. Uma entrada no `.gitignore` não remove arquivos já rastreados. Se quiser publicar apenas o código, remova o executável do índice, preservando sua cópia local:
 
   ```powershell
-  git rm --cached -- main.exe
+  git rm --cached -- exe/main.exe
   ```
 
 - O comando de compilação deste README gera `scanner-monitor.exe`. Adicione esse nome ou `*.exe` ao `.gitignore` se não quiser versionar os próximos builds.
@@ -312,6 +359,9 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 
 Sugestões para evoluir a implementação:
 
+- Adicionar cobertura para solicitação, leitura e gravação da chave no pacote `credential`.
+- Adicionar comando para trocar ou excluir a credencial salva.
+- Alinhar prompt, schema e domínio para PDFs bloqueados e certidões de casamento.
 - Configurar intervalo de monitoramento e quantidade de workers pelo `.env`.
 - Adicionar fila persistente de tentativas e índice de deduplicação entre categorias.
 - Ampliar testes para falhas de disco e permissões em diferentes sistemas operacionais.
