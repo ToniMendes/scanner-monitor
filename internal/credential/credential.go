@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"scanner-monitor/internal/config"
-	"scanner-monitor/internal/infra/ai"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -26,13 +24,13 @@ const (
 
 var ErrAPIKeyNotFound = errors.New("API Key não encontrada")
 
-func (c *Credential) GetCredential() (*ai.OpenAI, error) {
+func (c *Credential) GetCredential() (string, error) {
 	apiKey, err := loadAPIKey()
 
 	if err != nil {
 		apiKey, err = askAPIKey()
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 
 		err = saveAPIKey(apiKey)
@@ -41,12 +39,8 @@ func (c *Credential) GetCredential() (*ai.OpenAI, error) {
 		}
 	}
 
-	aiRepo, errAi := ai.NewOpenAI(config.Env.ModelOpenAI, apiKey)
-	if errAi != nil {
-		return nil, fmt.Errorf("não foi possível iniciar a IA: %w", errAi)
-	}
 
-	return aiRepo, nil
+	return apiKey, nil
 }
 
 func askAPIKey() (string, error) {

@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"scanner-monitor/internal/config"
 	"scanner-monitor/internal/credential"
+	"scanner-monitor/internal/infra/ai"
 	"scanner-monitor/internal/infra/filesystem"
 	"scanner-monitor/internal/worker"
 	"syscall"
@@ -33,7 +34,13 @@ func run() error {
 	}
 
 	cr := credential.NewCredential()
-	aiRepo, errGetCredential := cr.GetCredential()
+	apiKey, errGetCredential := cr.GetCredential()
+
+	aiRepo, errAi := ai.NewOpenAI(config.Env.ModelOpenAI, apiKey)
+	if errAi != nil {
+		return fmt.Errorf("não foi possível iniciar a IA: %w", errAi)
+	}
+
 	if errGetCredential != nil {
 		return errGetCredential
 	}
