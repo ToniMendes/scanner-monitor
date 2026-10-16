@@ -73,13 +73,17 @@ func (m *Monitor) Monitoring(ctx context.Context, filePathBase, dirPathBase stri
 					continue
 				}
 				if ctx.Err() != nil {
-					file.Close()
+					if err := file.Close(); err != nil {
+						report(errors.New("erro ao fechar o arquivo"))
+					}
 					continue
 				}
 				name := file.Name()
 				if _, loaded := active.LoadOrStore(name, true); loaded {
 					fmt.Printf("[PDF %q] Já está sendo processado; ignorando envio repetido.\n", name)
-					file.Close()
+					if err := file.Close(); err != nil {
+						report(errors.New("erro ao fechar o arquivo"))
+					}
 					continue
 				}
 				fmt.Printf("[PDF %q] Iniciando processamento.\n", name)
@@ -147,7 +151,9 @@ func (m *Monitor) retry(ctx context.Context, stage string, fn func(context.Conte
 
 func (m *Monitor) process(ctx context.Context, file *os.File, base string) error {
 	name := file.Name()
-	file.Close()
+	if err := file.Close(); err != nil {
+		return errors.New("erro ao fechar o arquivo")
+	}
 	var model *domain.ParametersPDF
 	if err := m.retry(ctx, "classificação de "+name, func(attempt context.Context) error {
 		fmt.Printf("[PDF %q] Abrindo e lendo o PDF.\n", name)
@@ -155,7 +161,16 @@ func (m *Monitor) process(ctx context.Context, file *os.File, base string) error
 		if err != nil {
 			return err
 		}
-		defer input.Close()
+
+		defer func() {
+			if errinput := input.Close(); err != nil {
+				err = errinput
+			}
+		}()
+		if err != nil {
+			return err
+		}
+
 		before, err := input.Stat()
 		if err != nil {
 			return err
