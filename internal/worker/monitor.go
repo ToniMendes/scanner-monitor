@@ -30,9 +30,9 @@ func NewMonitor(aiRepo domain.OpenAIRepository, fsRepo domain.FileSystemReposito
 func (m *Monitor) Monitoring(ctx context.Context, filePathBase, dirPathBase string) chan error {
 	fmt.Printf("Monitorando PDFs em %q. Destino: %q\n", filePathBase, dirPathBase)
 	ctx, cancel := context.WithCancel(ctx)
-	worker := 20
+	workers := 20
 	var wg sync.WaitGroup
-	var fileChan = make(chan *os.File)
+	var fileChan = make(chan *os.File, workers)
 
 	var errChan = make(chan error, 1)
 	report := func(err error) {
@@ -61,7 +61,7 @@ func (m *Monitor) Monitoring(ctx context.Context, filePathBase, dirPathBase stri
 		}
 	}()
 
-	for i := 0; i < worker; i++ {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
 
 		go func(i int) {
