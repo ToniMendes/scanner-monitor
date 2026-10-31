@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"scanner-monitor/internal/domain"
@@ -139,9 +140,22 @@ func (m *Monitor) retry(ctx context.Context, stage string, fn func(context.Conte
 		if err == nil {
 			return nil
 		}
+		var policy interface {
+			Retryable() bool
+			RetryAfter() time.Duration
+		}
+		if errors.As(err, &policy) && !policy.Retryable() {
+			return fmt.Errorf("%s falhou sem possibilidade de retry: %w", stage, err)
+		}
 		if i+1 < attempts {
 			fmt.Printf("[%s] Falha: %v. Aguardando para tentar novamente.\n", stage, err)
-			if waitErr := wait(ctx, m.RetryDelay*time.Duration(1<<i)); waitErr != nil {
+			delay := m.RetryDelay * time.Duration(1<<i)
+			if errors.As(err, &policy) && policy.RetryAfter() > 0 {
+				delay = policy.RetryAfter()
+			} else if delay > 0 {
+				delay = time.Duration(float64(delay) * (0.5 + rand.Float64()))
+			}
+			if waitErr := wait(ctx, delay); waitErr != nil {
 				return waitErr
 			}
 		}
@@ -155,7 +169,7 @@ func (m *Monitor) process(ctx context.Context, file *os.File, base string) error
 		return errors.New("erro ao fechar o arquivo")
 	}
 	var model *domain.ParametersPDF
-	if err := m.retry(ctx, "classificação de "+name, func(attempt context.Context) error {
+	if err := m.retry(ctx, "classificação de "+name, func(attempt context.Context) (err error) {
 		fmt.Printf("[PDF %q] Abrindo e lendo o PDF.\n", name)
 		input, err := os.Open(name)
 		if err != nil {
@@ -163,13 +177,10 @@ func (m *Monitor) process(ctx context.Context, file *os.File, base string) error
 		}
 
 		defer func() {
-			if errinput := input.Close(); err != nil {
-				err = errinput
+			if closeErr := input.Close(); err == nil {
+				err = closeErr
 			}
 		}()
-		if err != nil {
-			return err
-		}
 
 		before, err := input.Stat()
 		if err != nil {

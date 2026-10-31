@@ -3,7 +3,6 @@ package ai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,22 +28,28 @@ func classificationJSON(overrides map[string]any) string {
 	return string(data)
 }
 
-func TestNewOpenAI(t *testing.T) {
-	for _, tc := range []struct {
-		model, key string
-		bad        bool
-	}{{"", "key", true}, {" \t", "key", true}, {"model", "", true}, {"model", " \n", true}, {"model", "key", false}} {
-		got, err := NewOpenAI(tc.model, tc.key)
-		if (err != nil) != tc.bad {
-			t.Fatalf("%+v: %v", tc, err)
-		}
-		if !tc.bad && (got.Client == nil || got.modelSDK != tc.model) {
-			t.Fatal("invalid client")
-		}
+func openAIWithClient(client *openai.Client, model string) *OpenAI {
+	open := &OpenAI{modelSDK: model}
+	open.current.Store(&clientState{client: client, generation: 1})
+	return open
+}
+
+func openAIWithClientKey(model, key string) *OpenAI {
+	open := &OpenAI{modelSDK: model}
+	open.current.Store(&clientState{client: open.newClient(key), generation: 1})
+	return open
+}
+
+func TestNewOpenAIWithCredentialsRequiresModelAndManager(t *testing.T) {
+	if _, err := NewOpenAIWithCredentials(context.Background(), "", nil); err == nil {
+		t.Fatal("empty model accepted")
+	}
+	if _, err := NewOpenAIWithCredentials(context.Background(), "model", nil); err == nil {
+		t.Fatal("nil credential manager accepted")
 	}
 }
 func TestAnalyzePDFNil(t *testing.T) {
-	repo, _ := NewOpenAI("model", "key")
+	repo := openAIWithClientKey("model", "key")
 	if _, err := repo.AnalyzePDF(context.Background(), nil); err == nil {
 		t.Fatal("expected error")
 	}
@@ -103,11 +108,12 @@ func TestAnalyzePDFResponses(t *testing.T) {
 			}))
 			defer server.Close()
 			client := openai.NewClient(option.WithAPIKey("test"), option.WithBaseURL(server.URL+"/"), option.WithMaxRetries(0))
-			repo := &OpenAI{Client: &client, modelSDK: "test"}
+			repo := openAIWithClient(&client, "test")
 			file, err := os.CreateTemp(t.TempDir(), "*.pdf")
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer file.Close()
 			got, err := repo.AnalyzePDF(context.Background(), file)
 			if (err != nil) != tc.bad {
 				t.Fatalf("result=%v error=%v", got, err)
@@ -121,9 +127,10 @@ func TestAnalyzePDFResponses(t *testing.T) {
 					t.Fatalf("identification lost: components=%v err=%v", components, err)
 				}
 			}
-			if _, err := file.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
-				t.Fatalf("file not closed: %v", err)
+			if _, err := file.Seek(0, 0); err != nil {
+				t.Fatalf("analysis closed the worker-owned file: %v", err)
 			}
+			_ = file.Close()
 		})
 	}
 }
@@ -131,7 +138,7 @@ func TestUploadClosedFileAndCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected request") }))
 	defer server.Close()
 	client := openai.NewClient(option.WithAPIKey("test"), option.WithBaseURL(server.URL+"/"), option.WithMaxRetries(0))
-	repo := &OpenAI{Client: &client, modelSDK: "test"}
+	repo := openAIWithClient(&client, "test")
 	if _, err := repo.uploadPDF(context.Background(), nil); err == nil {
 		t.Fatal("nil accepted")
 	}
@@ -147,6 +154,7 @@ func TestUploadClosedFileAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer file.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := repo.AnalyzePDF(ctx, file); err == nil {
@@ -285,7 +293,7 @@ func TestRejectNonCompletedOrRefusedResponses(t *testing.T) {
 			}))
 			defer server.Close()
 			client := openai.NewClient(option.WithAPIKey("test"), option.WithBaseURL(server.URL+"/"), option.WithMaxRetries(0))
-			repo := &OpenAI{Client: &client, modelSDK: "test"}
+			repo := openAIWithClient(&client, "test")
 			if got, err := repo.classifyPDF(context.Background(), "file-test"); err == nil || got != nil {
 				t.Fatalf("response accepted: %v %v", got, err)
 			}

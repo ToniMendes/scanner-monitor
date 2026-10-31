@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"scanner-monitor/internal/credential"
 	"scanner-monitor/internal/domain"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/invopop/jsonschema"
 	"github.com/openai/openai-go/v3"
@@ -27,29 +31,57 @@ type inputDTO struct {
 	IdentificationEvidence *string `json:"identification_evidence" jsonschema_description:"Trecho curto transcrito do campo que comprova o nome e sua relação com o titular, indicando a página; inclua rótulos de CPF/prontuário quando usados; vazio se não identificado; não incluir dados de terceiros"`
 }
 type OpenAI struct {
-	Client   *openai.Client
-	sdkKey   string
-	modelSDK string
+	current       atomic.Pointer[clientState]
+	credentials   *credential.Manager
+	clientOptions []option.RequestOption
+	modelSDK      string
 }
 
-func NewOpenAI(m, sk string) (*OpenAI, error) {
-	if strings.TrimSpace(sk) == "" {
-		return nil, errors.New("OpenAI API key não informada")
-	}
+type clientState struct {
+	client     *openai.Client
+	generation uint64
+}
 
-	if strings.TrimSpace(m) == "" {
+// NewOpenAIWithCredentials validates the persisted key before returning a
+// usable client. The model-list request authenticates without creating a
+// response or consuming model-generation credits.
+func NewOpenAIWithCredentials(ctx context.Context, model string, credentials *credential.Manager, options ...option.RequestOption) (*OpenAI, error) {
+	if strings.TrimSpace(model) == "" {
 		return nil, errors.New("modelo OpenAI não informado")
 	}
+	if credentials == nil {
+		return nil, errors.New("gerenciador de credenciais não informado")
+	}
+	open := &OpenAI{credentials: credentials, clientOptions: options, modelSDK: model}
+	snapshot, err := credentials.Initialize(ctx, open.validateKey)
+	if err != nil {
+		return nil, fmt.Errorf("não foi possível validar a credencial OpenAI: %w", err)
+	}
+	open.current.Store(&clientState{client: open.newClient(snapshot.Key), generation: snapshot.Generation})
+	return open, nil
+}
 
-	client := openai.NewClient(
-		option.WithAPIKey(sk),
-	)
+func (open *OpenAI) newClient(key string) *openai.Client {
+	options := make([]option.RequestOption, 0, 2+len(open.clientOptions))
+	options = append(options, option.WithAPIKey(key), option.WithMaxRetries(0))
+	options = append(options, open.clientOptions...)
+	client := openai.NewClient(options...)
+	return &client
+}
 
-	return &OpenAI{
-		Client:   &client,
-		sdkKey:   sk,
-		modelSDK: m,
-	}, nil
+func (open *OpenAI) validateKey(ctx context.Context, key string) error {
+	validationCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	client := open.newClient(key)
+	_, err := client.Models.List(validationCtx)
+	if err == nil {
+		return nil
+	}
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%w", credential.ErrInvalidCredential)
+	}
+	return err
 }
 
 func (open *OpenAI) AnalyzePDF(
@@ -59,12 +91,6 @@ func (open *OpenAI) AnalyzePDF(
 	if file == nil {
 		return nil, errors.New("arquivo PDF não informado")
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Println("Error closing file: " + err.Error())
-		}
-	}()
-
 	fmt.Printf("[PDF %q] Enviando PDF para a OpenAI.\n", file.Name())
 	fileID, err := open.uploadPDF(ctx, file)
 	if err != nil {
@@ -86,13 +112,15 @@ func (open *OpenAI) uploadPDF(ctx context.Context, file *os.File) (string, error
 		return "", errors.New("arquivo PDF não informado")
 	}
 
-	uploadedFile, err := open.Client.Files.New(
-		ctx,
-		openai.FileNewParams{
-			File:    file,
-			Purpose: openai.FilePurposeUserData,
-		},
-	)
+	var uploadedFile *openai.FileObject
+	err := open.authenticatedCall(ctx, func(client *openai.Client) error {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		var err error
+		uploadedFile, err = client.Files.New(ctx, openai.FileNewParams{File: file, Purpose: openai.FilePurposeUserData})
+		return err
+	})
 
 	if err != nil {
 		return "", fmt.Errorf(
@@ -126,33 +154,38 @@ func (open *OpenAI) classifyPDF(
 		responses.ResponseInputContentParamOfInputText("Analise todas as páginas deste PDF e retorne a classificação e a identificação conforme o schema."),
 	}
 
-	response, err := open.Client.Responses.New(
-		ctx,
-		responses.ResponseNewParams{
-			Model:        responses.ResponsesModel(open.modelSDK),
-			Instructions: openai.String(classificationInstructions),
+	var response *responses.Response
+	err = open.authenticatedCall(ctx, func(client *openai.Client) error {
+		var callErr error
+		response, callErr = client.Responses.New(
+			ctx,
+			responses.ResponseNewParams{
+				Model:        responses.ResponsesModel(open.modelSDK),
+				Instructions: openai.String(classificationInstructions),
 
-			Input: responses.ResponseNewParamsInputUnion{
-				OfInputItemList: responses.ResponseInputParam{
-					responses.ResponseInputItemParamOfMessage(
-						content,
-						responses.EasyInputMessageRoleUser,
-					),
+				Input: responses.ResponseNewParamsInputUnion{
+					OfInputItemList: responses.ResponseInputParam{
+						responses.ResponseInputItemParamOfMessage(
+							content,
+							responses.EasyInputMessageRoleUser,
+						),
+					},
 				},
-			},
 
-			Text: responses.ResponseTextConfigParam{
-				Format: responses.ResponseFormatTextConfigUnionParam{
-					OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
-						Name:        "pdf_classification",
-						Description: openai.String("Tipo do documento, formulário em branco e identificação segura do aluno/titular"),
-						Schema:      schema,
-						Strict:      openai.Bool(true),
+				Text: responses.ResponseTextConfigParam{
+					Format: responses.ResponseFormatTextConfigUnionParam{
+						OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
+							Name:        "pdf_classification",
+							Description: openai.String("Tipo do documento, formulário em branco e identificação segura do aluno/titular"),
+							Schema:      schema,
+							Strict:      openai.Bool(true),
+						},
 					},
 				},
 			},
-		},
-	)
+		)
+		return callErr
+	})
 
 	if err != nil {
 		return nil, fmt.Errorf(

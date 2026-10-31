@@ -214,11 +214,11 @@ Após carregar o `.env`, a aplicação procura a chave no gerenciador de credenc
 Digite sua OpenAI API Key:
 ```
 
-Digite ou cole sua chave e pressione Enter. Os caracteres não aparecem no terminal. Uma chave vazia é rejeitada; a chave informada é salva pelo `go-keyring` com serviço `ScannerMonitor` e usuário `OpenAI`. No Windows, a entrada é a credencial genérica `ScannerMonitor:OpenAI`.
+Digite ou cole sua chave e pressione Enter. Os caracteres não aparecem no terminal. Uma chave vazia é rejeitada. Antes de salvar a chave, a aplicação valida a autenticação com uma consulta leve à lista de modelos; essa validação não gera uma resposta de IA. A chave fica no `go-keyring` com serviço `ScannerMonitor` e usuário `OpenAI`. No Windows, a entrada é a credencial genérica `ScannerMonitor:OpenAI`.
 
-Nas próximas execuções, a chave salva é reutilizada. Se o armazenamento falhar, a aplicação encerra com erro. A chave só é validada pela API quando uma requisição é realizada.
+Nas próximas execuções, a chave salva é validada antes de iniciar os workers. Uma chave revogada provoca uma solicitação de substituição. Se uma requisição durante o processamento retornar HTTP 401, o programa solicita e valida uma nova chave, atualiza o cliente e repete a etapa que falhou. Falhas de conexão não apagam nem substituem a credencial. Se a leitura ou gravação do keyring falhar, a aplicação encerra com erro e preserva a chave anterior.
 
-Para trocar a chave no Windows, encerre o monitor, abra **Gerenciador de Credenciais → Credenciais do Windows** e remova somente a entrada `ScannerMonitor:OpenAI`. Ao iniciar novamente, a aplicação solicitará a nova chave. Ainda não há comando próprio para essa troca.
+Uma chave nova só substitui a anterior depois de validada e gravada com sucesso. O programa mantém a chave no Gerenciador de Credenciais do Windows ao encerrar normalmente.
 
 ### Arquivos repetidos
 
@@ -332,7 +332,7 @@ Os arquivos `*_test.go`, distribuídos pelos pacotes, foram omitidos da árvore 
 
 ## Verificação
 
-Os testes de configuração criam arquivos `.env` temporários somente com `MODEL_OPENAI`, `FILE_PATH_BASE` e `DIR_PATH_BASE`, sem depender de uma chave da API. O pacote `credential` ainda não possui testes automatizados.
+Os testes de configuração criam arquivos `.env` temporários somente com `MODEL_OPENAI`, `FILE_PATH_BASE` e `DIR_PATH_BASE`, sem depender de uma chave da API. O pacote `credential` testa armazenamento e validação com implementações simuladas; os testes de IA usam um servidor HTTP local e não chamam a OpenAI real.
 
 Para executar os testes automatizados e gerar cobertura:
 
@@ -341,7 +341,7 @@ go test ./... '-coverprofile=coverage.out'
 go tool cover '-func=coverage.out'
 ```
 
-Os testes existentes usam diretórios temporários, repositórios simulados e um servidor HTTP local. Incluem configuração e sobrescrita por variáveis de ambiente; validação da identificação e escolha dos destinos; formulários em branco e documentos sem identificação; CPF inválido; classificação vazia; credenciais ausentes no cliente de IA; falhas de upload e análise; JSON inválido; cancelamento; criação de pastas; colisões de nomes; movimentação concorrente; preservação da origem em erros; filtragem de PDFs; substituição de arquivos; processamento contínuo e encerramento dos workers. Não usam credenciais reais nem chamam a OpenAI. Respostas simuladas verificam as regras do programa, mas não garantem a leitura real de documentos antigos ou manuscritos.
+Os testes existentes usam diretórios temporários, repositórios simulados e um servidor HTTP local. Incluem configuração e sobrescrita por variáveis de ambiente; validação e renovação concorrente de credenciais; erro 401; classificação; retry limitado; cancelamento; preservação do conteúdo integral do PDF; criação de pastas; colisões de nomes; movimentação concorrente; preservação da origem em erros; processamento contínuo e encerramento dos workers. Não usam credenciais reais nem chamam a OpenAI. Respostas simuladas verificam as regras do programa, mas não garantem a leitura real de documentos antigos ou manuscritos.
 
 Também é possível verificar condições de corrida com `go test -race ./...`, quando houver suporte do compilador C e da plataforma. Os testes não simulam todas as falhas possíveis do sistema operacional, como disco cheio ou interrupção de energia, e não validam a qualidade da classificação real.
 
@@ -349,7 +349,7 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 
 ## Limitações atuais
 
-- **Credenciais:** a primeira configuração depende de um terminal interativo e do gerenciador de credenciais do sistema. Não há opção própria na CLI para trocar ou excluir a chave salva.
+- **Credenciais:** a configuração e a substituição automática dependem de um terminal interativo e do gerenciador de credenciais do sistema. Não há opção própria na CLI para trocar ou excluir a chave salva manualmente.
 - **PDFs protegidos ou com erro de leitura:** o prompt menciona uma pasta `bloqueado`, mas esse destino ainda não está implementado no schema nem no domínio. Falhas na análise seguem as tentativas normais; não há encaminhamento automático para essa pasta.
 - **Certidão de casamento:** aparece nas instruções da IA, mas `certidao_casamento` ainda não é uma categoria aceita pelo schema e pelo domínio.
 - **Novas tentativas em memória:** há três tentativas por etapa, sem fila persistente. Falhas definitivas precisam de intervenção ou reinício para reprocessar o mesmo arquivo.
@@ -371,7 +371,7 @@ Para verificar o fluxo completo, use PDFs de teste, configure as pastas e execut
 | Modelo não informado | Preencha `MODEL_OPENAI` no `.env` |
 | Solicitação da chave da OpenAI | Informe a chave no terminal; ela será salva no gerenciador de credenciais do sistema |
 | Erro ao ler ou salvar a chave | Use um terminal interativo e confira o acesso ao gerenciador de credenciais do usuário |
-| Chave salva inválida ou revogada | Remova a entrada `ScannerMonitor:OpenAI` no Gerenciador de Credenciais do Windows e reinicie para informar outra chave |
+| Chave salva inválida ou revogada | Informe a nova chave quando o programa solicitá-la; confirme também acesso à internet e ao Gerenciador de Credenciais |
 | Nenhum PDF é processado | Confira `FILE_PATH_BASE` e coloque os PDFs na raiz da pasta |
 | Erro ao enviar ou analisar o PDF | Confira conexão, credenciais, acesso ao modelo, limites da API e integridade do arquivo |
 | Documento em `sem identificação` | Verifique legibilidade, nome completo do titular, vínculo dos dados e se há apenas um aluno identificável no PDF |

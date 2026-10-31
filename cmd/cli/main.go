@@ -33,16 +33,10 @@ func run() error {
 		return fmt.Errorf("não foi possível iniciar: %w", err)
 	}
 
-	cr := credential.NewCredential()
-	apiKey, errGetCredential := cr.GetCredential()
-
-	aiRepo, errAi := ai.NewOpenAI(config.Env.ModelOpenAI, apiKey)
+	cr := credential.NewManager(credential.KeyringStore{}, credential.TerminalPrompt)
+	aiRepo, errAi := ai.NewOpenAIWithCredentials(ctx, config.Env.ModelOpenAI, cr)
 	if errAi != nil {
 		return fmt.Errorf("não foi possível iniciar a IA: %w", errAi)
-	}
-
-	if errGetCredential != nil {
-		return errGetCredential
 	}
 
 	fsRepo := filesystem.NewFileSystem()
